@@ -7,3 +7,4 @@
 # MIT License for more details.
 
 from .tts import GradTTS
+from .cond_tts import CondGradTTS

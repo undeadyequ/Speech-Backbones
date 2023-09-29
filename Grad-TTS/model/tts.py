@@ -48,7 +48,7 @@ class GradTTS(BaseModule):
         self.decoder = Diffusion(n_feats, dec_dim, n_spks, spk_emb_dim, beta_min, beta_max, pe_scale)
 
     @torch.no_grad()
-    def forward(self, x, x_lengths, n_timesteps, temperature=1.0, stoc=False, spk=None, length_scale=1.0):
+    def forward(self, x, x_lengths, n_timesteps, temperature=1.0, stoc=False, spk=None, spk2=None, length_scale=1.0):
         """
         Generates mel-spectrogram from text. Returns:
             1. encoder outputs
@@ -70,6 +70,8 @@ class GradTTS(BaseModule):
         if self.n_spks > 1:
             # Get speaker embedding
             spk = self.spk_emb(spk)
+            if spk2 is not None:
+                spk2 = self.spk_emb(spk2)
 
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
         mu_x, logw, x_mask = self.encoder(x, x_lengths, spk)
@@ -93,7 +95,10 @@ class GradTTS(BaseModule):
         # Sample latent representation from terminal distribution N(mu_y, I)
         z = mu_y + torch.randn_like(mu_y, device=mu_y.device) / temperature
         # Generate sample by performing reverse dynamics
-        decoder_outputs = self.decoder(z, y_mask, mu_y, n_timesteps, stoc, spk)
+        if spk2 is None:
+            decoder_outputs = self.decoder(z, y_mask, mu_y, n_timesteps, stoc, spk)
+        else:
+            decoder_outputs = self.decoder(z, y_mask, mu_y, n_timesteps, stoc, spk1=spk, spk2=spk2)
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
 
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
@@ -166,6 +171,10 @@ class GradTTS(BaseModule):
             attn = attn_cut
             y = y_cut
             y_mask = y_cut_mask
+
+            if y_mask.shape[2] < y.shape[2]:
+                y = y[:, :, :y_mask.shape[2]]
+                attn = attn[:, :, :y_mask.shape[2]]
 
         # Align encoded text with mel-spectrogram and get mu_y segment
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))

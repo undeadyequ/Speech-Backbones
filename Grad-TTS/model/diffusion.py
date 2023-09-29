@@ -204,12 +204,22 @@ class GradLogPEstimator2d(BaseModule):
 
         for resnet1, resnet2, attn, upsample in self.ups:
             mask_up = masks.pop()
-            x = torch.cat((x, hiddens.pop()), dim=1)
+            # added to avoid size not matching
+            hid_pop = hiddens.pop()
+            hid_pop_size = hid_pop.size()
+            if hid_pop_size[2] != x.size()[2] or hid_pop_size[3] != x.size()[3]:
+                print("change old x shape {} to new one {} on last 2 dims".format(x.size(), hid_pop.size()))
+                x = x[:, :, :hid_pop.size()[2], :hid_pop.size()[3]]
+            #x = torch.cat((x, hiddens.pop()), dim=1)
+            x = torch.cat((x, hid_pop), dim=1)
+
             x = resnet1(x, mask_up, t)
             x = resnet2(x, mask_up, t)
             x = attn(x)
             x = upsample(x * mask_up)
 
+        if x.size()[3] != mask.size()[3]:
+            x = x[:, :, :, :mask.size()[3]]
         x = self.final_block(x, mask)
         output = self.final_conv(x * mask)
 
@@ -249,6 +259,8 @@ class Diffusion(BaseModule):
         z = torch.randn(x0.shape, dtype=x0.dtype, device=x0.device, 
                         requires_grad=False)
         xt = mean + z * torch.sqrt(variance)
+        #print(xt.size(), z.size(), mask.size())
+        # torch.Size([4, 80, 188]) torch.Size([4, 80, 188]) torch.Size([4, 1, 132])
         return xt * mask, z * mask
 
     @torch.no_grad()
@@ -275,8 +287,40 @@ class Diffusion(BaseModule):
         return xt
 
     @torch.no_grad()
+    def reverse_diffusion_interpolate(self, z, mask, mu, n_timesteps, stoc=False, spk1=None, spk2=None):
+        h = 1.0 / n_timesteps
+        xt = z * mask
+        for i in range(n_timesteps):
+            t = (1.0 - (i + 0.5)*h) * torch.ones(z.shape[0], dtype=z.dtype,
+                                                 device=z.device)
+            time = t.unsqueeze(-1).unsqueeze(-1)
+            noise_t = get_noise(time, self.beta_min, self.beta_max,
+                                cumulative=False)
+            estm1 = self.estimator(xt, mask, mu, t, spk1)
+            estm2 = self.estimator(xt, mask, mu, t, spk2)
+            inter_estm12 = (estm1 + estm2) * 0.5
+
+            if stoc:  # adds stochastic term
+                dxt_det = 0.5 * (mu - xt) - inter_estm12
+                dxt_det = dxt_det * noise_t * h
+                dxt_stoc = torch.randn(z.shape, dtype=z.dtype, device=z.device,
+                                       requires_grad=False)
+                dxt_stoc = dxt_stoc * torch.sqrt(noise_t * h)
+                dxt = dxt_det + dxt_stoc
+            else:
+                dxt = 0.5 * (mu - xt - inter_estm12)
+                dxt = dxt * noise_t * h
+            xt = (xt - dxt) * mask
+        return xt
+
+    @torch.no_grad()
     def forward(self, z, mask, mu, n_timesteps, stoc=False, spk=None):
         return self.reverse_diffusion(z, mask, mu, n_timesteps, stoc, spk)
+
+    # used for interpolation
+    #@torch.no_grad()
+    #def forward(self, z, mask, mu, n_timesteps, stoc=False, spk1=None, spk2=None):
+    #    return self.reverse_diffusion_interpolate(z, mask, mu, n_timesteps, stoc, spk1, spk2)
 
     def loss_t(self, x0, mask, mu, t, spk=None):
         xt, z = self.forward_diffusion(x0, mask, mu, t)
