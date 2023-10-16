@@ -22,7 +22,7 @@ from model.utils import sequence_mask, generate_path, duration_loss, fix_len_com
 class CondGradTTS(BaseModule):
     def __init__(self, n_vocab, n_spks, spk_emb_dim, n_enc_channels, filter_channels, filter_channels_dp, 
                  n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
-                 n_feats, dec_dim, beta_min, beta_max, pe_scale):
+                 n_feats, dec_dim, beta_min, beta_max, pe_scale, estimator_type):
         super(CondGradTTS, self).__init__()
         self.n_vocab = n_vocab
         self.n_spks = n_spks
@@ -46,10 +46,19 @@ class CondGradTTS(BaseModule):
         self.encoder = TextEncoder(n_vocab, n_feats, n_enc_channels, 
                                    filter_channels, filter_channels_dp, n_heads, 
                                    n_enc_layers, enc_kernel, enc_dropout, window_size)
-        self.decoder = CondDiffusion(n_feats, dec_dim, n_spks, spk_emb_dim, beta_min, beta_max, pe_scale)
+        self.decoder = CondDiffusion(n_feats, dec_dim, n_spks, spk_emb_dim,
+                                     beta_min, beta_max, pe_scale, estimator_type)
 
     @torch.no_grad()
-    def forward(self, x, x_lengths, n_timesteps, temperature=1.0, stoc=False, spk=None, length_scale=1.0, emo=None):
+    def forward(self, x, x_lengths, n_timesteps, temperature=1.0,
+                stoc=False,
+                spk=None,
+                length_scale=1.0,
+                emo=None,
+                emo2=None,
+                psd=None,
+                emolabel=None
+                ):
         """
         Generates mel-spectrogram from text. Returns:
             1. encoder outputs
@@ -94,12 +103,34 @@ class CondGradTTS(BaseModule):
         # Sample latent representation from terminal distribution N(mu_y, I)
         z = mu_y + torch.randn_like(mu_y, device=mu_y.device) / temperature
         # Generate sample by performing reverse dynamics
-        decoder_outputs = self.decoder(z, y_mask, mu_y, n_timesteps, stoc, spk, emo)
+        if emo2 is None:
+            decoder_outputs = self.decoder(z, y_mask, mu_y, n_timesteps,
+                                           stoc=stoc,
+                                           spk=None,
+                                           emo=emo,
+                                           psd=psd,
+                                           emolabel=emolabel
+                                           )
+        else:
+            decoder_outputs = self.decoder.reverse_diffusion_interp(
+                z, y_mask, mu_y, n_timesteps,
+                stoc=stoc,
+                spk=None,
+                emo1=emo,
+                emo2=emo2,
+                psd=psd,
+                emolabel=emolabel
+            )
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
-
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
 
-    def compute_loss(self, x, x_lengths, y, y_lengths, spk=None, out_size=None, emo=None):
+    def compute_loss(self, x, x_lengths, y, y_lengths,
+                     spk=None,
+                     out_size=None,
+                     emo=None,
+                     psd=None,
+                     emolabel=None
+                     ):
         """
         Computes 3 losses:
             1. duration loss: loss between predicted token durations and those extracted by Monotinic Alignment Search (MAS).
@@ -174,7 +205,13 @@ class CondGradTTS(BaseModule):
         mu_y = mu_y.transpose(1, 2)
 
         # Compute loss of score-based decoder
-        diff_loss, xt = self.decoder.compute_loss(y, y_mask, mu_y, spk, emo=emo)
+        diff_loss, xt = self.decoder.compute_loss(y, y_mask, mu_y,
+                                                  spk,
+                                                  offset=1e-5,
+                                                  emo=emo,
+                                                  psd=psd,
+                                                  emolabel=emolabel
+                                                  )
         
         # Compute loss between aligned encoder outputs and mel-spectrogram
         prior_loss = torch.sum(0.5 * ((y - mu_y) ** 2 + math.log(2 * math.pi)) * y_mask)

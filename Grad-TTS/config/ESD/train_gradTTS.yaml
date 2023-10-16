@@ -1,6 +1,6 @@
 path:
   ckpt_path: "./output/ckpt/ESD"
-  log_dir: "./logs/ESD_gradtts"
+  log_dir: "./logs/crossatt/"
   result_path: "./output/result/ESD"
 optimizer:
   batch_size: 16

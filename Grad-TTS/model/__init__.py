@@ -8,3 +8,4 @@
 
 from .tts import GradTTS
 from .cond_tts import CondGradTTS
+from .cond_diffusion import CondDiffusion

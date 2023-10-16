@@ -5,7 +5,7 @@
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # MIT License for more details.
-
+import json
 import random
 import numpy as np
 
@@ -22,6 +22,14 @@ import sys
 sys.path.insert(0, 'hifi-gan')
 from meldataset import mel_spectrogram
 import os
+
+emo_num = {
+    "Angry": 0,
+    "Surprise": 1,
+    "Sad": 2,
+    "Neutral": 3,
+    "Happy": 4
+}
 
 class TextMelDataset(torch.utils.data.Dataset):
     def __init__(self, filelist_path, cmudict_path, add_blank=True,
@@ -171,11 +179,13 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
     """
     Read Text mel, spker, and emotion
     """
-    def __init__(self, filelist_path, cmudict_path, preprocess_dir, add_blank=True,
+    def __init__(self, filelist_path, meta_path, cmudict_path, preprocess_dir, add_blank=True,
                  n_fft=1024, n_mels=80, sample_rate=22050,
-                 hop_length=256, win_length=1024, f_min=0., f_max=8000):
+                 hop_length=256, win_length=1024, f_min=0., f_max=8000, datatype="psd"):
         super().__init__()
         self.filelist = parse_filelist(filelist_path, split_char='|')
+        with open(meta_path, "r") as f:
+            self.metajson = json.load(f)
         self.cmudict = cmudict.CMUDict(cmudict_path)
         self.preprocessed_path = preprocess_dir
         self.n_fft = n_fft
@@ -186,6 +196,7 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         self.f_min = f_min
         self.f_max = f_max
         self.add_blank = add_blank
+        self.datatype = datatype
         random.seed(random_seed)
         random.shuffle(self.filelist)
 
@@ -193,9 +204,16 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         basename, speaker, phone, text = line[0], line[1], line[2], line[3]
         text = self.get_text(text, add_blank=self.add_blank)
         mel = self.get_mel(basename, read_exist=True, spk=speaker)
-        speaker = self.get_speaker(speaker)
-        emo = self.get_emo(basename)
-        return (text, mel, speaker, emo)
+        spk = self.get_speaker(speaker)
+
+        if self.datatype == "emo":
+            emo = self.get_emo(basename)
+            return (text, mel, spk, emo)
+        else:
+            pit, eng, dur = (self.get_pit(basename, speaker),
+                             self.get_eng(basename, speaker),
+                             self.get_dur(basename, speaker))
+            return (text, mel, spk, pit, eng, dur)
 
     def get_mel(self, filepath, read_exist=True, spk=None):
         if read_exist:
@@ -222,6 +240,33 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         iiv = torch.from_numpy(np.load(iiv_path).squeeze(0))
         return iiv
 
+    def get_pit(self, basename, speaker):
+        pitch_path = os.path.join(
+            self.preprocessed_path,
+            "pitch",
+            "{}-pitch-{}.npy".format(speaker, basename),
+        )
+        pitch = torch.unsqueeze(torch.from_numpy(np.load(pitch_path)), 0)
+        return pitch
+
+    def get_eng(self, basename, speaker):
+        eng_path = os.path.join(
+            self.preprocessed_path,
+            "energy",
+            "{}-energy-{}.npy".format(speaker, basename),
+        )
+        eng = torch.unsqueeze(torch.from_numpy(np.load(eng_path)), 0)
+        return eng
+
+    def get_dur(self, basename, speaker):
+        dur_path = os.path.join(
+            self.preprocessed_path,
+            "duration",
+            "{}-duration-{}.npy".format(speaker, basename),
+        )
+        dur = torch.unsqueeze(torch.from_numpy(np.load(dur_path)), 0)
+        return dur
+
     def get_text(self, text, add_blank=True):
         text_norm = text_to_sequence(text, dictionary=self.cmudict)
         if self.add_blank:
@@ -234,8 +279,15 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         return speaker
 
     def __getitem__(self, index):
-        text, mel, speaker, emo= self.get_fourthlet(self.filelist[index])
-        item = {'y': mel, 'x': text, 'spk': speaker, "emo": emo}
+        if self.datatype == "emo":
+            text, mel, speaker, emo = self.get_fourthlet(self.filelist[index])
+            item = {'y': mel, 'x': text, 'spk': speaker, "emo": emo}
+        else:
+            text, mel, speaker, pit, eng, dur = self.get_fourthlet(self.filelist[index])
+            emolabel = self.metajson[self.filelist[index][0]]["emotion"]
+            emolabel = torch.nn.functional.one_hot(torch.tensor([emo_num[emolabel]]), num_classes=5)
+            emolabel = torch.unsqueeze(emolabel, 0)
+            item = {'y': mel, 'x': text, 'spk': speaker, "pit": pit, "eng": eng, "dur": dur, "emo_label": emolabel}
         return item
 
     def __len__(self):
@@ -255,6 +307,7 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         for index in idx:
             test_batch.append(self.__getitem__(index))
         return test_batch
+
 
 class TextMelSpeakerBatchCollate(object):
     def __call__(self, batch):

@@ -12,6 +12,8 @@ from einops import rearrange
 
 from model.base import BaseModule
 from model.diffusion import *
+from diffusers import UNet2DConditionModel
+
 
 class GradLogPEstimator2dCond(BaseModule):
     def __init__(self, dim, dim_mults=(1, 2, 4), groups=8,
@@ -64,10 +66,10 @@ class GradLogPEstimator2dCond(BaseModule):
 
     def forward(self, x, mask, mu, t, spk=None, emo=None, style="concatenate"):
         """
-        x: (1, 80, mel_len)
-        mu: (1, 80, mel_len)
-        mask: (1, mel_len)
-        emo: (M, )
+        x: (b, 1, 80, mel_len)
+        mu: (b, 1, 80, mel_len)
+        mask: (b, mel_len)
+        emo: (b, 1, M)
         """
         if not isinstance(spk, type(None)):
             s = self.spk_mlp(spk)
@@ -131,11 +133,28 @@ class CondDiffusion(BaseModule):
     """
     Conditional Diffusion with interpolation
     """
-    def __init__(self, n_feats, dim,
-                 n_spks=1, spk_emb_dim=64,
-                 beta_min=0.05, beta_max=20, pe_scale=1000,
-                 cond_style="stage_brk"
+    def __init__(self,
+                 n_feats,
+                 dim,
+                 n_spks=1,
+                 spk_emb_dim=64,
+                 beta_min=0.05,
+                 beta_max=20,
+                 pe_scale=1000,
+                 estimator_type="unet"
                  ):
+        """
+
+        Args:
+            n_feats:
+            dim:   mel dim
+            n_spks:
+            spk_emb_dim:
+            beta_min:
+            beta_max:
+            pe_scale:
+            estimator_type:  "unet", "crossatt"
+        """
         super(CondDiffusion, self).__init__()
         self.n_feats = n_feats
         self.dim = dim
@@ -144,10 +163,20 @@ class CondDiffusion(BaseModule):
         self.beta_min = beta_min
         self.beta_max = beta_max
         self.pe_scale = pe_scale
+        self.estimator_type = estimator_type
 
-        self.estimator = GradLogPEstimator2dCond(dim, n_spks=n_spks,
-                                             spk_emb_dim=spk_emb_dim,
-                                             pe_scale=pe_scale)
+        if estimator_type == "unet":
+            self.estimator = GradLogPEstimator2dCond(dim,
+                                                     n_spks=n_spks,
+                                                     spk_emb_dim=spk_emb_dim,
+                                                     pe_scale=pe_scale)
+        else:
+            self.estimator = UNet2DConditionModel(
+                sample_size=(80, 100),
+                in_channels=1,
+                out_channels=4,
+                norm_num_groups=8
+            )
 
     def forward_diffusion(self, x0, mask, mu, t):
         time = t.unsqueeze(-1).unsqueeze(-1)
@@ -160,10 +189,17 @@ class CondDiffusion(BaseModule):
         return xt * mask, z * mask
 
     @torch.no_grad()
-    def reverse_diffusion(self, z, mask, mu, n_timesteps, stoc=False, spk=None, emo1=None, emo2=None):
+    def reverse_diffusion(self, z, mask, mu, n_timesteps,
+                          stoc=True,
+                          spk=None,
+                          emo=None,
+                          psd=None,
+                          emolabel=None,
+                          ):
         interpolate_rate = 0.5
         h = 1.0 / n_timesteps
         xt = z * mask
+
         for i in range(n_timesteps):
             t = (1.0 - (i + 0.5) * h) * torch.ones(z.shape[0], dtype=z.dtype,
                                                    device=z.device)
@@ -171,14 +207,99 @@ class CondDiffusion(BaseModule):
             noise_t = get_noise(time, self.beta_min, self.beta_max,
                                 cumulative=False)
 
-            score_emo = self.estimator(xt, mask, mu, t, spk, emo1)
-            if emo2 is not None:
-                score_emo2 = self.estimator(xt, mask, mu, t, spk, emo2)
-                score_emo = score_emo * interpolate_rate + score_emo2 * (1 - interpolate_rate)
+            if emo is not None:
+                hidden_stats1 = emo
+            else:
+                hidden_stats1 = torch.concat(psd, dim=1)
 
+            if self.estimator_type == "unet":
+                score_emo = self.estimator(xt, mask, mu, t, spk, hidden_stats1)
+            else:
+                score_emo = self.estimator(sample=xt,
+                                           timestep=t,
+                                           encoder_hidden_states=hidden_stats1,
+                                           class_labels=emolabel,
+                                           cross_attention_kwargs=None
+                                           )
             dxt_det = 0.5 * (mu - xt) - score_emo
 
-            if stoc:  # adds stochastic term
+            # adds stochastic term
+            if stoc:
+                ## add stochastics
+                dxt_det = dxt_det * noise_t * h
+                dxt_stoc = torch.randn(z.shape, dtype=z.dtype, device=z.device,
+                                       requires_grad=False)
+                dxt_stoc = dxt_stoc * torch.sqrt(noise_t * h)
+                dxt = dxt_det + dxt_stoc
+            else:
+                dxt = 0.5 * (mu - xt - score_emo)
+                dxt = dxt * noise_t * h
+            xt = (xt - dxt) * mask
+        return xt
+
+
+    @torch.no_grad()
+    def reverse_diffusion_interp(self, z, mask, mu, n_timesteps,
+                                 stoc=True,
+                                 spk=None,
+                              emo1=None,
+                              emo2=None,
+                              psd1=None,
+                              psd2=None,
+                              emolabel1=None,
+                              emolabel2=None
+                              ):
+        interpolate_rate = 0.5
+        h = 1.0 / n_timesteps
+        xt = z * mask
+
+        for i in range(n_timesteps):
+            t = (1.0 - (i + 0.5) * h) * torch.ones(z.shape[0], dtype=z.dtype,
+                                                   device=z.device)
+            time = t.unsqueeze(-1).unsqueeze(-1)
+            noise_t = get_noise(time, self.beta_min, self.beta_max,
+                                cumulative=False)
+
+            if emo1 is not None:
+                hidden_stats1 = emo1
+            if psd1 is not None:
+                hidden_stats1 = torch.concat(psd1, dim=1)
+
+            if emo2 is not None:
+                hidden_stats2 = emo1
+            elif psd2 is not None:
+                hidden_stats2 = torch.concat(psd1, dim=1)
+            else:
+                hidden_stats2 = None
+
+            if self.estimator_type == "unet":
+                score_emo = self.estimator(xt, mask, mu, t, spk, hidden_stats1)
+
+                # for interpolation
+                if hidden_stats2 is not None:
+                    score_emo2 = self.estimator(xt, mask, mu, t, spk, hidden_stats2)
+                    score_emo = score_emo * interpolate_rate + score_emo2 * (1 - interpolate_rate)
+            else:
+                score_emo = self.estimator(sample=xt,
+                               timestep=t,
+                               encoder_hidden_states=hidden_stats1,
+                               class_labels=emolabel1,
+                               cross_attention_kwargs=None
+                               )
+
+                # for interpolation ->
+                if hidden_stats2 is not None:
+                    score_emo2 = self.estimator(sample=xt,
+                               timestep=t,
+                               encoder_hidden_states="",
+                               class_labels=hidden_stats2,
+                               cross_attention_kwargs=None
+                               )
+                    score_emo = score_emo * interpolate_rate + score_emo2 * (1 - interpolate_rate)
+            dxt_det = 0.5 * (mu - xt) - score_emo
+
+            # adds stochastic term
+            if stoc:
                 ## add stochastics
                 dxt_det = dxt_det * noise_t * h
                 dxt_stoc = torch.randn(z.shape, dtype=z.dtype, device=z.device,
@@ -192,20 +313,60 @@ class CondDiffusion(BaseModule):
         return xt
 
     @torch.no_grad()
-    def forward(self, z, mask, mu, n_timesteps, stoc=False, spk=None, emo1=None, emo2=None):
-        return self.reverse_diffusion(z, mask, mu, n_timesteps, stoc, spk, emo1, emo2)
+    def forward(self, z, mask, mu, n_timesteps,
+                stoc=False,
+                spk=None,
+                emo=None,
+                psd=None,
+                emolabel=None
+                ):
+        return self.reverse_diffusion(z, mask, mu, n_timesteps,
+                                      stoc,
+                                      spk,
+                                      emo,
+                                      psd,
+                                      emolabel
+                                      )
 
-    def loss_t(self, x0, mask, mu, t, spk=None, emo=None):
+    def loss_t(self, x0, mask, mu, t,
+               spk=None,
+               emo=None,
+               psd=None,
+               emolabel=None):
         xt, z = self.forward_diffusion(x0, mask, mu, t)
         time = t.unsqueeze(-1).unsqueeze(-1)
         cum_noise = get_noise(time, self.beta_min, self.beta_max, cumulative=True)
-        noise_estimation = self.estimator(xt, mask, mu, t, spk, emo)
+
+        if emo is not None:
+            hidden_stats = emo
+        else:
+            hidden_stats = torch.concat(psd, dim=1)
+
+        if self.estimator_type == "unet":
+            noise_estimation = self.estimator(xt, mask, mu, t, spk, emo)
+        else:
+            noise_estimation = self.estimator(sample=xt,
+                                       timestep=t,
+                                       encoder_hidden_states=hidden_stats,
+                                       class_labels=emolabel,
+                                       cross_attention_kwargs=None
+                                       )
+
         noise_estimation *= torch.sqrt(1.0 - torch.exp(-cum_noise))
         loss = torch.sum((noise_estimation + z) ** 2) / (torch.sum(mask) * self.n_feats)
         return loss, xt
 
-    def compute_loss(self, x0, mask, mu, spk=None, offset=1e-5, emo=None):
+    def compute_loss(self, x0, mask, mu,
+                     spk=None,
+                     offset=1e-5,
+                     emo=None,
+                     psd=None,
+                     emolabel=None):
         t = torch.rand(x0.shape[0], dtype=x0.dtype, device=x0.device,
                        requires_grad=False)
         t = torch.clamp(t, offset, 1.0 - offset)
-        return self.loss_t(x0, mask, mu, t, spk, emo)
+        return self.loss_t(x0, mask, mu, t,
+                           spk,
+                           emo,
+                           psd,
+                           emolabel)

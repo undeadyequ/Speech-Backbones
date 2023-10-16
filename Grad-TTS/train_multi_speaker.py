@@ -57,7 +57,7 @@ dec_dim = params.dec_dim
 beta_min = params.beta_min
 beta_max = params.beta_max
 pe_scale = params.pe_scale
-
+estimator_type = params.estimator_type
 
 def train_process(train_filelist_path, valid_filelist_path, model_type="uncondGrad", log_dir=None):
     torch.manual_seed(random_seed)
@@ -181,7 +181,7 @@ def train_process(train_filelist_path, valid_filelist_path, model_type="uncondGr
         torch.save(ckpt, f=f"{log_dir}/grad_{epoch}.pt")
 
 
-def train_process_cond(configs):
+def train_process_cond(configs, ckpt=None, resume_epoch=1):
     preprocess_config, model_config, train_config = configs
 
     log_dir = train_config["path"]["log_dir"]
@@ -194,14 +194,22 @@ def train_process_cond(configs):
 
     train_filelist_path = preprocess_dir + "/train.txt"
     valid_filelist_path = preprocess_dir + "/val.txt"
+    meta_json_path = preprocess_dir + "/metadata_new.json"
 
-    train_dataset = TextMelSpeakerEmoDataset(train_filelist_path, cmudict_path,
+    train_dataset = TextMelSpeakerEmoDataset(train_filelist_path,
+                                             meta_json_path,
+                                             cmudict_path,
                                              preprocess_dir, add_blank,
-                                          n_fft, n_feats, sample_rate, hop_length,
-                                          win_length, f_min, f_max)
-    test_dataset = TextMelSpeakerEmoDataset(valid_filelist_path, cmudict_path, preprocess_dir,
-                                            add_blank, n_fft, n_feats, sample_rate, hop_length,
-                                         win_length, f_min, f_max)
+                                             n_fft, n_feats, sample_rate, hop_length,
+                                             win_length, f_min, f_max
+                                             )
+    test_dataset = TextMelSpeakerEmoDataset(valid_filelist_path,
+                                            meta_json_path,
+                                            cmudict_path,
+                                            preprocess_dir, add_blank,
+                                            n_fft, n_feats, sample_rate, hop_length,
+                                            win_length, f_min, f_max
+                                            )
 
     batch_collate = TextMelSpeakerEmoBatchCollate()
 
@@ -214,12 +222,15 @@ def train_process_cond(configs):
     model = CondGradTTS(nsymbols, n_spks, spk_emb_dim, n_enc_channels,
                     filter_channels, filter_channels_dp,
                     n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size,
-                    n_feats, dec_dim, beta_min, beta_max, pe_scale).cuda()
+                    n_feats, dec_dim, beta_min, beta_max, pe_scale, estimator_type).cuda()
     """
     print('Number of encoder parameters = %.2fm' % (model.encoder.nparams / 1e6))
     print('Number of decoder parameters = %.2fm' % (model.decoder.nparams / 1e6))
     print('Initializing optimizer...')
     """
+
+    if resume_epoch > 1:
+        resume(ckpt, model, 1)
 
     optimizer = torch.optim.Adam(params=model.parameters(), lr=learning_rate)
 
@@ -233,7 +244,7 @@ def train_process_cond(configs):
 
     print('Start training...')
     iteration = 0
-    for epoch in range(1, n_epochs + 1):
+    for epoch in range(resume_epoch + 1, n_epochs + 1):
         model.eval()
         print('Synthesis...')
         with torch.no_grad():
@@ -241,11 +252,24 @@ def train_process_cond(configs):
                 x = item['x'].to(torch.long).unsqueeze(0).cuda()
                 x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
                 spk = item['spk'].to(torch.long).cuda()
-                emo = item['emo'].cuda()
+                #emo = item['emo'].cuda()
+                pit = item["pit"].cuda()
+                eng = item["eng"].cuda()
+                dur = item["dur"].cuda()
+                emoLabel = item["emo_label"].cuda()
 
                 i = int(spk.cpu())
+                y_enc, y_dec, attn = model(x, x_lengths, n_timesteps=50,
+                                           temperature=1.0,
+                                           stoc=False,
+                                           length_scale=1.0,
+                                           spk=spk,
+                                           #emo=emo,
+                                           emo=None,
+                                           psd=(pit, eng, dur),
+                                           emolabel=emoLabel
+                                           )
 
-                y_enc, y_dec, attn = model(x, x_lengths, n_timesteps=50, spk=spk, emo=emo)
                 logger.add_image(f'image_{i}/generated_enc',
                                  plot_tensor(y_enc.squeeze().cpu()),
                                  global_step=iteration, dataformats='HWC')
@@ -266,18 +290,28 @@ def train_process_cond(configs):
         dur_losses = []
         prior_losses = []
         diff_losses = []
+
         with tqdm(loader, total=len(train_dataset) // batch_size) as progress_bar:
             for batch in progress_bar:
                 model.zero_grad()
                 x, x_lengths = batch['x'].cuda(), batch['x_lengths'].cuda()
                 y, y_lengths = batch['y'].cuda(), batch['y_lengths'].cuda()
                 spk = batch['spk'].cuda()
-                emo = batch['emo'].cuda()
+                #emo = batch['emo'].cuda()
+                pit = batch["pit"].cuda()
+                eng = batch["eng"].cuda()
+                dur = batch["dur"].cuda()
+                emoLabel = batch["emo_label"].cuda()
+
                 dur_loss, prior_loss, diff_loss = model.compute_loss(x, x_lengths,
                                                                      y, y_lengths,
                                                                      spk=spk,
                                                                      out_size=out_size,
-                                                                     emo=emo)
+                                                                     #emo=emo,
+                                                                     emo=None,
+                                                                     psd=(pit, eng, dur),
+                                                                     emolabel=emoLabel
+                                                                     )
                 loss = sum([dur_loss, prior_loss, diff_loss])
                 loss.backward()
 
@@ -317,6 +351,26 @@ def train_process_cond(configs):
         ckpt = model.state_dict()
         torch.save(ckpt, f=f"{log_dir}/grad_{epoch}.pt")
 
+
+from typing import Sequence
+from typing import Union
+from pathlib import Path
+
+def resume(
+    checkpoint: Union[str, Path],
+    model: torch.nn.Module,
+    ngpu: int = 0,
+):
+    states = torch.load(
+        checkpoint,
+        map_location=f"cuda:{torch.cuda.current_device()}" if ngpu > 0 else "cpu",
+    )
+    model.load_state_dict(states)
+    """
+        for optimizer, state in zip(optimizers, states["optimizers"]):
+        optimizer.load_state_dict(state)
+    """
+
 if __name__ == "__main__":
     import argparse
     config_dir = "/home/rosen/Project/Speech-Backbones/Grad-TTS/config/ESD"
@@ -354,12 +408,7 @@ if __name__ == "__main__":
 
     # Train on ESD dataset
     if True:
-        file_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/"
-        train_filelist_path = file_dir + 'train.txt'  # wav|spk|phone|text
-        valid_filelist_path = file_dir + 'valid.txt'
-        log_dir = "logs/condGradTTS"
-
-        # Read Config
+        # Input: Config
         preprocess_config = yaml.load(
             open(args.preprocess_config, "r"), Loader=yaml.FullLoader
         )
@@ -367,4 +416,8 @@ if __name__ == "__main__":
         train_config = yaml.load(open(args.train_config, "r"), Loader=yaml.FullLoader)
         configs = (preprocess_config, model_config, train_config)
 
-        train_process_cond(configs)
+        resume_epoch = 1
+        ckpt = f"/home/rosen/Project/Speech-Backbones/Grad-TTS/logs/ESD_gradtts_local/grad_{resume_epoch}.pt"
+
+        # Output
+        train_process_cond(configs, ckpt=ckpt, resume_epoch=resume_epoch)
