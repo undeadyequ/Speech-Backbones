@@ -1,23 +1,38 @@
 encoder:
-  encoder_layer: 4
-  encoder_head: 2
-  encoder_hidden: 256
-  decoder_layer: 6
-  decoder_head: 2
-  decoder_hidden: 256
-  conv_filter_size: 1024
-  conv_kernel_size: [9, 1]
-  encoder_dropout: 0.2
-  decoder_dropout: 0.2
+  n_enc_channels: 192
+  filter_channels: 768
+  filter_channels_dp: 256
+  n_enc_layers: 6
+  enc_kernel: 3
+  enc_dropout: 0.1
+  n_heads: 2
+  window_size: 4
+  length_scale: 1.0 # speech pace
 
 decoder:
-  pass
+  dec_dim: 64
+  beta_min: 0.05
+  beta_max: 20.0
+  pe_scale: 1000  # 1 for `grad-tts-old.pt` checkpoint
+  stoc: True
+  temperature: 1.0 # terminal variance
+  n_timesteps: 50
 
+unet:
+  unet_type: "origin"  # origin or diffuser
+  att_type: "linear"   # linear or crossAtt
+
+spk_emb_dim: 64
+emo_emb_dim: 5
+
+mu: "txt_depend"         # txt_depend or norm
+solver: "sde"            # sde or ode
+
+# -----------------------not used-------------
 
 vocoder:
   model: "HiFi-GAN" # support 'HiFi-GAN', 'MelGAN'
   speaker: "LJSpeech" # support  'LJSpeech', 'universal'
-
 
 variance_predictor:
   filter_size: 256

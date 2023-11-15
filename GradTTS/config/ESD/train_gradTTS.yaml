@@ -2,6 +2,15 @@ path:
   ckpt_path: "./output/ckpt/ESD"
   log_dir: "./logs/crossatt/"
   result_path: "./output/result/ESD"
+test_size: 4
+n_epochs: 10000
+batch_size: 4
+learning_rate: 1e-4
+seed: 37
+save_every: 1
+resume_epoch: 1
+
+# ---------------not used-------------
 optimizer:
   batch_size: 16
   betas: [0.9, 0.98]
@@ -18,11 +27,4 @@ step:
   synth_step: 100
   val_step: 100
   save_step: 3000
-condition:
-  test_size: 4
-  n_epochs: 10000
-  batch_size: 4
-  learning_rate: 1e-4
-  seed: 37
-  save_every: 1
-  out_size: fix_len_compatibility(2*sample_rate//256)
+

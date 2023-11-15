@@ -181,7 +181,8 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
     """
     def __init__(self, filelist_path, meta_path, cmudict_path, preprocess_dir, add_blank=True,
                  n_fft=1024, n_mels=80, sample_rate=22050,
-                 hop_length=256, win_length=1024, f_min=0., f_max=8000, datatype="psd"):
+                 hop_length=256, win_length=1024, f_min=0., f_max=8000,
+                 datatype="psd"):
         super().__init__()
         self.filelist = parse_filelist(filelist_path, split_char='|')
         with open(meta_path, "r") as f:
@@ -201,19 +202,39 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         random.shuffle(self.filelist)
 
     def get_fourthlet(self, line):
+        """
+
+        Args:
+            line:
+
+        Returns:
+            text: (txt_len, ?)
+            mel: (mel_len, ?)
+            spk: (1,) ?
+            pit: (1, word_len)
+            eng: (1, word_len)
+            dur: (1, word_len)
+        """
         basename, speaker, phone, text = line[0], line[1], line[2], line[3]
         text = self.get_text(text, add_blank=self.add_blank)
         mel = self.get_mel(basename, read_exist=True, spk=speaker)
         spk = self.get_speaker(speaker)
 
-        if self.datatype == "emo":
+        # Emo_embed
+        if self.datatype == "emo_embed":
             emo = self.get_emo(basename)
             return (text, mel, spk, emo)
-        else:
+        # PSD
+        elif self.datatype == "psd":
             pit, eng, dur = (self.get_pit(basename, speaker),
                              self.get_eng(basename, speaker),
                              self.get_dur(basename, speaker))
             return (text, mel, spk, pit, eng, dur)
+        elif self.datatype == "w2v":
+            w2v = self.get_wav2vect(basename, speaker)
+            return (text, mel, spk, w2v)
+        else:
+            return (text, mel, spk)
 
     def get_mel(self, filepath, read_exist=True, spk=None):
         if read_exist:
@@ -246,7 +267,7 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
             "pitch",
             "{}-pitch-{}.npy".format(speaker, basename),
         )
-        pitch = torch.unsqueeze(torch.from_numpy(np.load(pitch_path)), 0)
+        pitch = torch.unsqueeze(torch.from_numpy(np.load(pitch_path)).to(torch.float32), 0)
         return pitch
 
     def get_eng(self, basename, speaker):
@@ -255,7 +276,7 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
             "energy",
             "{}-energy-{}.npy".format(speaker, basename),
         )
-        eng = torch.unsqueeze(torch.from_numpy(np.load(eng_path)), 0)
+        eng = torch.unsqueeze(torch.from_numpy(np.load(eng_path)).to(torch.float32), 0)
         return eng
 
     def get_dur(self, basename, speaker):
@@ -264,8 +285,17 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
             "duration",
             "{}-duration-{}.npy".format(speaker, basename),
         )
-        dur = torch.unsqueeze(torch.from_numpy(np.load(dur_path)), 0)
+        dur = torch.unsqueeze(torch.from_numpy(np.load(dur_path)).to(torch.float32), 0)
         return dur
+
+    def get_wav2vect(self, basename, speaker):
+        w2v_path = os.path.join(
+            self.preprocessed_path,
+            "emo_reps",
+            "{}_{}.npy".format(speaker, basename),
+        )
+        w2v = torch.unsqueeze(torch.from_numpy(np.load(w2v_path)), 0)
+        return w2v
 
     def get_text(self, text, add_blank=True):
         text_norm = text_to_sequence(text, dictionary=self.cmudict)
@@ -282,12 +312,20 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         if self.datatype == "emo":
             text, mel, speaker, emo = self.get_fourthlet(self.filelist[index])
             item = {'y': mel, 'x': text, 'spk': speaker, "emo": emo}
-        else:
+        elif self.datatype == "psd":
             text, mel, speaker, pit, eng, dur = self.get_fourthlet(self.filelist[index])
             emolabel = self.metajson[self.filelist[index][0]]["emotion"]
             emolabel = torch.nn.functional.one_hot(torch.tensor([emo_num[emolabel]]), num_classes=5)
-            emolabel = torch.unsqueeze(emolabel, 0)
-            item = {'y': mel, 'x': text, 'spk': speaker, "pit": pit, "eng": eng, "dur": dur, "emo_label": emolabel}
+            #emolabel = torch.unsqueeze(emolabel, 0)
+            item = {'y': mel,
+                    'x': text,
+                    'spk': speaker,
+                    "pit": pit,
+                    "eng": eng,
+                    "dur": dur,
+                    "emo_label": emolabel}
+        else:
+            print("Not implemented!")
         return item
 
     def __len__(self):
@@ -337,8 +375,12 @@ class TextMelSpeakerBatchCollate(object):
 
 
 class TextMelSpeakerEmoBatchCollate(object):
+    """
+    Collate samples
+    """
     def __call__(self, batch):
         B = len(batch)
+        # x, y
         y_max_length = max([item['y'].shape[-1] for item in batch])
         y_max_length = fix_len_compatibility(y_max_length)
         x_max_length = max([item['x'].shape[-1] for item in batch])
@@ -346,22 +388,50 @@ class TextMelSpeakerEmoBatchCollate(object):
 
         y = torch.zeros((B, n_feats, y_max_length), dtype=torch.float32)
         x = torch.zeros((B, x_max_length), dtype=torch.long)
-        emo = torch.zeros((B, batch[0]["emo"].shape[-1]), dtype=torch.float32)
+        # emo_label
+        if "emo_label" in batch[0].keys():
+            emo = torch.zeros((B, batch[0]["emo_label"].shape[-1]), dtype=torch.float32)
+        # psd
+        if "pit" in batch[0].keys():
+            pit_max_length = max([item["pit"].shape[-1] for item in batch])
+            pits = torch.zeros((B, pit_max_length), dtype=torch.float32)
+            engs = torch.zeros((B, pit_max_length), dtype=torch.float32)
+            durs = torch.zeros((B, pit_max_length), dtype=torch.float32)
+
         y_lengths, x_lengths = [], []
         spk = []
 
         for i, item in enumerate(batch):
-            y_, x_, spk_, emo_ = item['y'], item['x'], item['spk'], item["emo"]
+            y_, x_, spk_ = item['y'], item['x'], item['spk']
             y_lengths.append(y_.shape[-1])
             x_lengths.append(x_.shape[-1])
             y[i, :, :y_.shape[-1]] = y_
             x[i, :x_.shape[-1]] = x_
-            emo[i, :] = emo_
             spk.append(spk_)
+            if "pit" in item.keys():
+                pit, eng, dur = item["pit"], item["eng"], item["dur"]
+                ## Sequential length for psd
+                psd_lengths = []
+                psd_lengths.append(pit.shape[-1])
+                pits[i, :pit.shape[-1]] = pit[0]
+                engs[i, :eng.shape[-1]] = eng[0]
+                durs[i, :dur.shape[-1]] = dur[0]
+            if "emo_label" in item.keys():
+                emo_ = item["emo_label"]
+                emo[i, :] = emo_
 
         y_lengths = torch.LongTensor(y_lengths)
         x_lengths = torch.LongTensor(x_lengths)
         spk = torch.cat(spk, dim=0)
         #emo = torch.FloatTensor(emo)
-        return {'x': x, 'x_lengths': x_lengths, 'y': y, 'y_lengths': y_lengths,
-                'spk': spk, "emo": emo}
+        return {'x': x,
+                'x_lengths': x_lengths,
+                'y': y,
+                'y_lengths': y_lengths,
+                'spk': spk,
+                "emo_label": emo,
+                "pit": pits,
+                "eng": engs,
+                "dur": durs,
+                "psd_lengths": psd_lengths
+                }

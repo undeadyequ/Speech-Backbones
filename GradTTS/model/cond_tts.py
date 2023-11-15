@@ -10,7 +10,6 @@ import math
 import random
 
 import torch
-
 from model import monotonic_align
 from model.base import BaseModule
 from model.text_encoder import TextEncoder
@@ -20,9 +19,10 @@ from model.utils import sequence_mask, generate_path, duration_loss, fix_len_com
 
 
 class CondGradTTS(BaseModule):
-    def __init__(self, n_vocab, n_spks, spk_emb_dim, n_enc_channels, filter_channels, filter_channels_dp, 
-                 n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size, 
-                 n_feats, dec_dim, beta_min, beta_max, pe_scale, estimator_type):
+    def __init__(self, n_vocab, n_spks, spk_emb_dim, emo_emb_dim,
+                 n_enc_channels, filter_channels, filter_channels_dp,
+                 n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size,
+                 n_feats, dec_dim, beta_min, beta_max, pe_scale, unet_type, att_type):
         super(CondGradTTS, self).__init__()
         self.n_vocab = n_vocab
         self.n_spks = n_spks
@@ -43,21 +43,28 @@ class CondGradTTS(BaseModule):
 
         if n_spks > 1:
             self.spk_emb = torch.nn.Embedding(n_spks, spk_emb_dim)
+        #self.emo_emb = torch.nn.Embedding(5, emo_emb_dim)
+
         self.encoder = TextEncoder(n_vocab, n_feats, n_enc_channels, 
                                    filter_channels, filter_channels_dp, n_heads, 
                                    n_enc_layers, enc_kernel, enc_dropout, window_size)
-        self.decoder = CondDiffusion(n_feats, dec_dim, n_spks, spk_emb_dim,
-                                     beta_min, beta_max, pe_scale, estimator_type)
+        self.decoder = CondDiffusion(n_feats, dec_dim, n_spks,
+                                     spk_emb_dim, emo_emb_dim,
+                                     beta_min, beta_max, pe_scale, unet_type, att_type)
 
     @torch.no_grad()
-    def forward(self, x, x_lengths, n_timesteps, temperature=1.0,
+    def forward(self,
+                x,
+                x_lengths,
+                n_timesteps,
+                temperature=1.0,
                 stoc=False,
                 spk=None,
                 length_scale=1.0,
                 emo=None,
                 emo2=None,
                 psd=None,
-                emolabel=None
+                emo_label=None
                 ):
         """
         Generates mel-spectrogram from text. Returns:
@@ -80,6 +87,9 @@ class CondGradTTS(BaseModule):
         if self.n_spks > 1:
             # Get speaker embedding
             spk = self.spk_emb(spk)
+
+        if emo_label is not None:
+            emo_label = emo_label.to(torch.float)
 
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
         mu_x, logw, x_mask = self.encoder(x, x_lengths, spk)
@@ -104,22 +114,28 @@ class CondGradTTS(BaseModule):
         z = mu_y + torch.randn_like(mu_y, device=mu_y.device) / temperature
         # Generate sample by performing reverse dynamics
         if emo2 is None:
-            decoder_outputs = self.decoder(z, y_mask, mu_y, n_timesteps,
+            decoder_outputs = self.decoder(z,
+                                           y_mask,
+                                           mu_y,
+                                           n_timesteps,
                                            stoc=stoc,
-                                           spk=None,
+                                           spk=spk,
                                            emo=emo,
                                            psd=psd,
-                                           emolabel=emolabel
+                                           emo_label=emo_label
                                            )
         else:
             decoder_outputs = self.decoder.reverse_diffusion_interp(
-                z, y_mask, mu_y, n_timesteps,
+                z,
+                y_mask,
+                mu_y,
+                n_timesteps,
                 stoc=stoc,
-                spk=None,
+                spk=spk,
                 emo1=emo,
                 emo2=emo2,
                 psd=psd,
-                emolabel=emolabel
+                emo_label=emo_label
             )
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
@@ -129,7 +145,7 @@ class CondGradTTS(BaseModule):
                      out_size=None,
                      emo=None,
                      psd=None,
-                     emolabel=None
+                     emo_label=None
                      ):
         """
         Computes 3 losses:
@@ -205,12 +221,14 @@ class CondGradTTS(BaseModule):
         mu_y = mu_y.transpose(1, 2)
 
         # Compute loss of score-based decoder
-        diff_loss, xt = self.decoder.compute_loss(y, y_mask, mu_y,
+        diff_loss, xt = self.decoder.compute_loss(y,
+                                                  y_mask,
+                                                  mu_y,
                                                   spk,
                                                   offset=1e-5,
                                                   emo=emo,
                                                   psd=psd,
-                                                  emolabel=emolabel
+                                                  emo_label=emo_label
                                                   )
         
         # Compute loss between aligned encoder outputs and mel-spectrogram

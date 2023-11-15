@@ -1,4 +1,5 @@
-dataset: "ESD"
+dataset: "ESD"   # libri-tts or ljspeech, ESD
+datatype: "psd"  # psd, emo_embed, w2v
 
 path:
   # Original embedding
@@ -20,6 +21,22 @@ path:
   index_train_f: "train.txt"
   index_val_f: "val.txt"
 
+  # other
+  cmudict_path: 'resources/cmu_dictionary'
+
+feature:
+  add_blank: True
+  n_feats: 80
+  n_spks: 247    # 247 for Libri-TTS filelist and 1 for LJSpeech
+  n_fft: 1024
+  sample_rate: 22050 # if dataset == "ljspeech" else 24000
+  hop_length: 256
+  win_length: 1024
+  f_min: 0
+  f_max: 8000
+
+
+#------------------ NOT used-------------------
 preprocessing:
   val_size: 512
   text:
