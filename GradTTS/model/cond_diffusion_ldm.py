@@ -18,6 +18,10 @@ from GradTTS.model.text_encoder import TextEncoder
 
 # diffuser
 from src.diffusers import UNet2DConditionModel
+from GradTTS.text.symbols import symbols
+
+add_blank = True
+nsymbols = len(symbols) + 1 if add_blank else len(symbols)
 
 
 class CondDiffusionLDM(BaseModule):
@@ -35,15 +39,15 @@ class CondDiffusionLDM(BaseModule):
                  beta_max=20,
                  pe_scale=1000,
                  att_type="linear",
-                 n_vocab="",
-                 n_enc_channels="",
-                 filter_channels="",
-                 filter_channels_dp="",
-                 n_heads="",
-                 n_enc_layers="",
-                 enc_kernel="",
-                 enc_dropout="",
-                 window_size=""
+                 n_vocab=nsymbols,
+                 n_enc_channels=192,
+                 filter_channels=768,
+                 filter_channels_dp=256,
+                 n_heads=2,
+                 n_enc_layers=6,
+                 enc_kernel=3,
+                 enc_dropout=0.1,
+                 window_size=4
                  ):
         """
 
@@ -65,7 +69,6 @@ class CondDiffusionLDM(BaseModule):
         self.beta_min = beta_min
         self.beta_max = beta_max
         self.pe_scale = pe_scale
-        self.unet_type = unet_type
         self.att_type = att_type
 
         self.estimator = UNet2DConditionModel(
@@ -73,21 +76,32 @@ class CondDiffusionLDM(BaseModule):
             in_channels=1, # Number of channels in the input sample
             out_channels=1, #
             down_block_types=("DownBlock2D", "CrossAttnDownBlock2D"),
-            mid_block_type= "UNetMidBlock2DCrossAttn",
+            mid_block_type="UNetMidBlock2DCrossAttn",
             up_block_types=("CrossAttnUpBlock2D", "UpBlock2D"),
-            encoder_hid_dim=256,
+            encoder_hid_dim=80,
+            encoder_hid_dim_type="text_proj",
+            cross_attention_dim=256,
             block_out_channels=(32, 64),
             norm_num_groups=8,  # ?
             layers_per_block=2,
-            cross_attention_dim=(32, 64),
             class_embed_type="simple_projection",
-            addition_embed_type="text",
-            projection_class_embeddings_input_dim=32,
+            addition_embed_type="image",
+            projection_class_embeddings_input_dim=5,
             class_embeddings_concat=True,
         )
-        self.text_encoder = TextEncoder(n_vocab, n_feats, n_enc_channels,
-                                   filter_channels, filter_channels_dp, n_heads,
-                                   n_enc_layers, enc_kernel, enc_dropout, window_size)
+        """
+        self.text_encoder = TextEncoder(
+            n_vocab,
+            n_feats,
+            n_enc_channels,
+            filter_channels,
+            filter_channels_dp,
+            n_heads,
+            n_enc_layers,
+            enc_kernel,
+            enc_dropout,
+            window_size)
+        """
 
     def forward_diffusion(self, x0, mask, mu, t):
         time = t.unsqueeze(-1).unsqueeze(-1)
@@ -106,8 +120,8 @@ class CondDiffusionLDM(BaseModule):
                           mu,
                           n_timesteps,
                           stoc=True,
-                          text=None,
-                          text_mask=None,
+                          enc_hids=None,
+                          enc_hids_mask=None,
                           spk=None,
                           emo=None,
                           psd=None,
@@ -120,18 +134,18 @@ class CondDiffusionLDM(BaseModule):
 
         mel_len = 100 for length consistence
         Args:
-            z:      (b, 80, mel_len)
-            mask:   (b, 1, mel_len)
-            mu:     (b, 80, mel_len)
+            z:      (b, mel_len, 80)
+            mask:   (b, mel_len, 1)
+            mu:     (b, mel_len, 80)
             n_timesteps: int
             stoc:   bool, default = False
             spk:    (b, spk_emb) if exist else  NONE
             emo:    (b, emo_emb) if exist else  NONE
-            psd:    (b, psd_dim, psd_len)   psd_len is not mel_len, psd_dim = 3 when eng/pitch/dur, psd=256 when wav2vector
+            psd:    (b, psd_len, psd_dim)   psd_len is not mel_len, psd_dim = 3 when eng/pitch/dur, psd=256 when wav2vector
             emo_label: (b, 1, emo_n)
 
         Returns:
-
+            xt:     (b, mel_len, 80)
         """
         h = 1.0 / n_timesteps
         xt = z * mask
@@ -142,23 +156,20 @@ class CondDiffusionLDM(BaseModule):
             time = t.unsqueeze(-1).unsqueeze(-1)
             noise_t = get_noise(time, self.beta_min, self.beta_max,
                                 cumulative=False)
-
-            # text
-            hidden_stats1 = self.text_encoder(text, text_mask)
             # added cond
             added_cond_kwargs = {
-                "psd": psd
+                "image_embeds": psd,
+                "spk": spk
             }
             score_emo = self.estimator(
-                sample=xt,
+                sample=torch.unsqueeze(xt, 1),      # (batch, channel, height, width)
                 timestep=t,
-                encoder_hidden_states=hidden_stats1,
+                encoder_hidden_states=enc_hids,  # (batch, sequence_length, feature_dim)
                 class_labels=emo_label,
                 cross_attention_kwargs=None,
                 added_cond_kwargs=added_cond_kwargs,
-                encoder_attention_mask=text_mask
-            )
-
+                encoder_attention_mask=torch.squeeze(enc_hids_mask, 2)
+            )["sample"].squeeze(1)
             dxt_det = 0.5 * (mu - xt) - score_emo
 
             # adds stochastic term
@@ -276,6 +287,8 @@ class CondDiffusionLDM(BaseModule):
                 mu,
                 n_timesteps,
                 stoc=False,
+                enc_hids=None,
+                enc_hids_mask=None,
                 spk=None,
                 emo=None,
                 psd=None,
@@ -286,6 +299,8 @@ class CondDiffusionLDM(BaseModule):
                                       mu=mu,
                                       n_timesteps=n_timesteps,
                                       stoc=stoc,
+                                      enc_hids=enc_hids,
+                                      enc_hids_mask=enc_hids_mask,
                                       spk=spk,
                                       emo=emo,
                                       psd=psd,

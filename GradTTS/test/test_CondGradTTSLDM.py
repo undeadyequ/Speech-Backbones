@@ -4,11 +4,12 @@ sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
 
 import torch
 import yaml
-from GradTTS.model.cond_tts import CondGradTTS
-from GradTTS.model.cond_diffusion import CondDiffusion
+from GradTTS.model.cond_tts_ldm import CondGradTTSLDM
+
+from GradTTS.model.cond_diffusion_ldm import CondDiffusionLDM
 from GradTTS.text.symbols import symbols
 
-def test_CondGradTTS():
+def test_CondGradTTSLDM():
     config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
     train_config = config_dir + "/train_gradTTS.yaml"
     preprocess_config = config_dir + "/preprocess_gradTTS.yaml"
@@ -64,6 +65,7 @@ def test_CondGradTTS():
     text_max_len = 31
     psd_max_len = 31
     mel_max_len = 50
+    mel_dim = 80
     speaker_n = 10
     style_emb_dim = 786
     speech_len = 70
@@ -86,60 +88,91 @@ def test_CondGradTTS():
             torch.randn(batch, psd_max_len),
             torch.randn(batch, psd_max_len),
         ),
+        "emo_label": torch.tensor(emolabel, dtype=torch.float32),
+    }
+    model = CondGradTTSLDM(
+        nsymbols,
+        n_spks,
+        spk_emb_dim,
+        emo_emb_dim,
+        n_enc_channels,
+        filter_channels,
+        filter_channels_dp,
+        n_heads,
+        n_enc_layers,
+        enc_kernel,
+        enc_dropout,
+        window_size,
+        n_feats,
+        dec_dim,
+        beta_min,
+        beta_max,
+        pe_scale,
+        att_type
+    )
+
+    # test forward
+    # decoder output: attn
+    decoder_outputs, attn = model(**inputs_value)
+    print(decoder_outputs.size(),
+          attn.size())
+    assert decoder_outputs.size()[2] == 80
+    assert decoder_outputs.size()[1] > text_max_len
+    assert attn.size()[2] == text_max_len
+    assert attn.size()[3] == decoder_outputs.size()[1]
+    """
+    # test inference_interp_refspeechs
+    inputs_value1 = {
+        "x": torch.randint(0, text_n, (batch, text_max_len)),
+        "x_lengths": torch.randint(0, text_max_len, (batch, )),
+        "n_timesteps": n_timesteps,
+        "temperature": temperature,
+        "stoc": stoc,
+        "spk": torch.randint(0, speaker_n, (batch, )),
+        "length_scale": length_scale,
+        "psd1": (
+            torch.randn(batch, psd_max_len),
+            torch.randn(batch, psd_max_len),
+            torch.randn(batch, psd_max_len),
+        ),
+        "psd2": (
+            torch.randn(batch, psd_max_len),
+            torch.randn(batch, psd_max_len),
+            torch.randn(batch, psd_max_len),
+        ),
+        "ref_speech1": torch.randn(batch, mel_max_len, mel_dim),
+        "ref_speech2": torch.randn(batch, mel_max_len, mel_dim),
+        "emo_label1": torch.tensor(emolabel, dtype=torch.int64),
+        "emo_label2": torch.tensor(emolabel, dtype=torch.int64),
+
+    }
+    output2 = model.inference_interp_refspeechs(
+        **inputs_value1)
+    print(output2)
+    
+    # test compute_loss
+    inputs_value2 = {
+        "x": torch.randint(0, text_n, (batch, text_max_len)),
+        "x_lengths": torch.randint(0, text_max_len, (batch, )),
+        "n_timesteps": n_timesteps,
+        "temperature": temperature,
+        "stoc": stoc,
+        "spk": torch.randint(0, speaker_n, (batch, )),
+        "length_scale": length_scale,
+        #"emo": torch.randn(2, text_n),
+        "psd": (
+            torch.randn(batch, psd_max_len),
+            torch.randn(batch, psd_max_len),
+            torch.randn(batch, psd_max_len),
+        ),
         "emo_label": torch.tensor(emolabel, dtype=torch.int64),
     }
+    loss = model.compute_loss(
+        **inputs_value2
+    )
+    print(loss)
     """
-    x = torch.,
-    x_lengths,
-    n_timesteps=n_timesteps,
-    temperature=temperature,
-    stoc=stoc,
-    length_scale=length_scale,
-    spk=spk,
-    emo=emo,
-    psd=(pit, eng, dur),
-    emolabel = emoLabel
 
-    [str(l) for l in list(range(0, batch))],
-    [str(l) for l in list(range(100, 100 + batch))],
-    torch.randint(0, speaker_n, (batch,)),
-    torch.randint(0, text_n, (batch, text_max_len)),
-    torch.randint(0, speaker_n, (batch,)),
-    text_max_len,
-    torch.randn((batch, mel_max_len, 80)),
-    torch.randint(0, mel_max_len, (batch,)),
-    mel_max_len,
-    torch.randn(batch, text_max_len),
-    torch.randn(batch, text_max_len),
-    torch.randint(0, 10, (batch, text_max_len)),
-    torch.randn(batch, style_emb_dim),
-    """
-    model = CondGradTTS(nsymbols,
-                        n_spks,
-                        spk_emb_dim,
-                        emo_emb_dim,
-                        n_enc_channels,
-                        filter_channels,
-                        filter_channels_dp,
-                        n_heads,
-                        n_enc_layers,
-                        enc_kernel,
-                        enc_dropout,
-                        window_size,
-                        n_feats,
-                        dec_dim,
-                        beta_min,
-                        beta_max,
-                        pe_scale,
-                        unet_type,
-                        att_type
-                        )
-    output = model(**inputs_value)
-
-    #
-    print(output[0].size(),
-          output[1].size(),
-          output[2].size())
 
 if __name__ == '__main__':
-    test_CondGradTTS()
+    test_CondGradTTSLDM()
