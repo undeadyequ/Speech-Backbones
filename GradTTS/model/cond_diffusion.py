@@ -10,9 +10,9 @@ from einops import rearrange
 import math
 import torch
 import torch.nn.functional as F
-from GradTTS.model.base import BaseModule
-from GradTTS.model.diffusion import *
-from GradTTS.model.estimators import GradLogPEstimator2dCond
+from model.base import BaseModule
+from model.diffusion import *
+from model.estimators import GradLogPEstimator2dCond
 
 # diffuser
 from src.diffusers import UNet2DConditionModel
@@ -70,8 +70,8 @@ class CondDiffusion(BaseModule):
         elif unet_type == "diffuser":
             self.estimator = UNet2DConditionModel(
                 sample_size=(80, 100),
-                in_channels=1, # Number of channels in the input sample
-                out_channels=1, #
+                in_channels=2,    # Number of channels in the input sample
+                out_channels=1,   #
                 down_block_types=("DownBlock2D", "CrossAttnDownBlock2D"),
                 mid_block_type= "UNetMidBlock2DCrossAttn",
                 up_block_types=("CrossAttnUpBlock2D", "UpBlock2D"),

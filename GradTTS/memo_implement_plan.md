@@ -24,7 +24,7 @@
 
 
 ## Quesition
-### Condition and sample (The reason)
+### Condition and sample (Diffuser)
 - XT (stlye)
   - Sample
     - Sample -> sample channel 1
@@ -32,13 +32,34 @@
   - Embedding
     - Emotion -> class embedding
     - Time    -> time embdding
-    - PSD     -> add condition (image)
+    - PSD     -> add condition (image) or (mel-embedding)
+  - Concate (addition_embed_type=image): 
+    - **sample** = concate(sample, hint) where hint = self.add_embedding(image_embs, hint)
+    - **emb** = embp(time) + embp(class_emb) + add_embedding(aug_emb) 
+      - where embp = emb + time_project
+  - Concate (addition_embed_type=text):
+  - Question: 
+    - Why seperate sample and embedding? what are they for? ->
+    - Why t is needed in estimator?
+    - During inference, which influenced the style more ? noised sample or class_embedding? 
 - Hid (semantic)
   - Text
-- How XT and embedding combined? group normalization.
-  - "DownBlock2D"
-  - "CrossAttnDownBlock2D"
-  - 
+- model: down, mid, up
+  - down (DownBlock2D + CrossAttnDownBlock2D):
+    - IN: sample, emb
+    - Downsample2D
+      - ResnetBock: GroupNorm (AdaGroupNorm) -> LoRACompatibleConv -> LoRACompatibleLinear -> GroupNorm -> LoRACompatibleConv
+        - AdaGroupNorm: **sample** = AdaGroupNorm(**sample**, **emb**)
+    - CrossAttnDownBlock2D
+      - crossAtt(k,v=**sample**, q=**txt**)   (sample=hidden_states, txt=encoder_hidden_states)
+    - Quesition
+      - Why emb(t) is separeted from x_t? <- homegenous data is processed in advance
+      - Cross attention VS LinearAttention
+  - mid: UNetMidBlock2DCrossAttn
+    - IN: out of down
+
+  - up: (CrossAttnUpBlock2D + UpBlock2D)
+    - IN: out of mid
 
 ```python
 self.norm1 = torch.nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
@@ -54,18 +75,9 @@ self.norm1 = torch.nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps
     - Emotion -> class embedding
     - Time    -> time embdding
     - PSD     -> add condition (image)
-- Hid (semantic)
-  - Text
-- How XT and embedding combined? group normalization.
-  - "DownBlock2D"
-  - "CrossAttnDownBlock2D"
-  - 
-
-$
-\~{x_t} = concate(x_t, embp(spk), embp(emo), repeat(psd))
-$
-
-where embp = emb + mlp
+  - Concate: $\~{x_t} = concate(x_t, embp(spk), embp(emo), repeat(psd))$ where embp = emb + mlp
+  - GAP:
+    - Simple combination of style and content
 
 - model: down, mid, up
   - down:
@@ -76,18 +88,17 @@ where embp = emb + mlp
           - GroupNorm: Norm on a group with similar channels.
           - mish: An activation with suppression in negative value and same with relu in positive value
       - LinearAttention: attention with k,q,v == x 
-  - Quesition
-    - Why emb(t) is separeted from x_t? <- homegenous data is processed in advance
-    - Cross attention VS LinearAttention
+    - Quesition
+      - Why emb(t) is separeted from x_t? <- homegenous data is processed in advance
+      - Cross attention VS LinearAttention
   
   - mid:
     - IN: out of down
-    - mid\_block1 -> mid\_block2$
+    - ResnetBlock -> Residual+Rezero+LinearAttention -> ResnetBlock
 
   - up:
     - IN: out of mid
-    - resnet1 -> resnet2 -> attn -> upsample
-
+    - ResnetBock -> ResnetBlock -> Residual+Rezero+LinearAttention -> Upsample
 
 ```python
 self.norm1 = torch.nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)

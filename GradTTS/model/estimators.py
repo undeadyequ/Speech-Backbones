@@ -3,8 +3,8 @@ from einops import rearrange
 import math
 import torch
 import torch.nn.functional as F
-from GradTTS.model.base import BaseModule
-from GradTTS.model.diffusion import *
+from model.base import BaseModule
+from model.diffusion import *
 
 class GradLogPEstimator2dCond(BaseModule):
     def __init__(self,

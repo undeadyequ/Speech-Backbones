@@ -1,10 +1,10 @@
 path:
   ckpt_path: "./output/ckpt/ESD"
-  log_dir: "./logs/crossatt/"
+  log_dir: "./logs/crossatt_diffuser/"
   result_path: "./output/result/ESD"
 test_size: 4
 n_epochs: 10000
-batch_size: 4
+batch_size: 1
 learning_rate: 1e-4
 seed: 37
 save_every: 1

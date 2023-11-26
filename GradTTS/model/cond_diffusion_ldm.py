@@ -9,7 +9,6 @@
 from einops import rearrange
 import math
 import torch
-import torch.nn.functional as F
 from GradTTS.model.base import BaseModule
 from GradTTS.model.diffusion import *
 from GradTTS.model.estimators import GradLogPEstimator2dCond
@@ -19,9 +18,85 @@ from GradTTS.model.text_encoder import TextEncoder
 # diffuser
 from src.diffusers import UNet2DConditionModel
 from GradTTS.text.symbols import symbols
+from typing import Any, Dict, List, Optional, Tuple, Union
+from GradTTS.model.utils import (sequence_mask, generate_path, duration_loss,
+                                 fix_len_compatibility, align_a2b)
 
 add_blank = True
 nsymbols = len(symbols) + 1 if add_blank else len(symbols)
+
+
+class UNet2DConditionModelEMO(UNet2DConditionModel):
+    """
+    A extending unet with more conditioning value including spk and psd
+    """
+    def __init__(self,
+                 n_spks,
+                 spk_emb_dim,
+                 psd_n,
+                 n_feats
+                 ):
+        super(UNet2DConditionModel, self).__init__()
+
+        self.unet_model = UNet2DConditionModel(
+            sample_size=(80, 100),
+            in_channels=3,  # Number of channels in the input sample
+            out_channels=1, #
+            down_block_types=("DownBlock2D", "CrossAttnDownBlock2D"),
+            mid_block_type="UNetMidBlock2DCrossAttn",
+            up_block_types=("CrossAttnUpBlock2D", "UpBlock2D"),
+            encoder_hid_dim=80,
+            encoder_hid_dim_type="text_proj",
+            #cross_attention_dim=256,
+            cross_attention_dim=32,
+            block_out_channels=(32, 64),
+            norm_num_groups=8,  # ?
+            layers_per_block=2,
+            class_embed_type="simple_projection",
+            #addition_embed_type="image",
+            projection_class_embeddings_input_dim=5,
+            class_embeddings_concat=True)
+
+    def forward(
+        self,
+        sample: torch.FloatTensor,
+        timestep: Union[torch.Tensor, float, int],
+        encoder_hidden_states: torch.Tensor,
+        class_labels: Optional[torch.Tensor] = None,
+        timestep_cond: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+        added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
+        down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
+        mid_block_additional_residual: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
+        return_dict: bool = True,
+        spk: torch.LongTensor = None,
+        psd: torch.FloatTensor = None,
+        sampleadd: str = "concate",
+    ):
+        if psd is not None:
+            if sampleadd == "concate":
+                sample_concate = torch.stack([sample, spk, psd], 1)  # (b, 3, mel_dim, pmel_len)
+                #sample_concate_mask = sample_mask.unsqueeze(1)  # (b, 1, 1, pmel_len)
+            else:
+                sample_concate = sample + spk + psd
+                #sample_concate_mask = sample_mask
+        else:
+            sample_concate = torch.stack([sample, spk], 1)
+            #sample_concate_mask = sample_mask.unsqueeze(1)
+
+        sample = self.unet_model(
+            sample=sample_concate,  # (batch, channel, height, width)
+            timestep=timestep,
+            encoder_hidden_states=encoder_hidden_states,  # (batch, sequence_length, feature_dim)
+            class_labels=class_labels,
+            cross_attention_kwargs=None,
+            # added_cond_kwargs=added_cond_kwargs,
+            encoder_attention_mask=encoder_attention_mask,
+        )
+        return sample["sample"].squeeze(1)
+
 
 
 class CondDiffusionLDM(BaseModule):
@@ -38,16 +113,7 @@ class CondDiffusionLDM(BaseModule):
                  beta_min=0.05,
                  beta_max=20,
                  pe_scale=1000,
-                 att_type="linear",
-                 n_vocab=nsymbols,
-                 n_enc_channels=192,
-                 filter_channels=768,
-                 filter_channels_dp=256,
-                 n_heads=2,
-                 n_enc_layers=6,
-                 enc_kernel=3,
-                 enc_dropout=0.1,
-                 window_size=4
+                 att_type="linear"
                  ):
         """
 
@@ -71,37 +137,12 @@ class CondDiffusionLDM(BaseModule):
         self.pe_scale = pe_scale
         self.att_type = att_type
 
-        self.estimator = UNet2DConditionModel(
-            sample_size=(80, 100),
-            in_channels=1, # Number of channels in the input sample
-            out_channels=1, #
-            down_block_types=("DownBlock2D", "CrossAttnDownBlock2D"),
-            mid_block_type="UNetMidBlock2DCrossAttn",
-            up_block_types=("CrossAttnUpBlock2D", "UpBlock2D"),
-            encoder_hid_dim=80,
-            encoder_hid_dim_type="text_proj",
-            cross_attention_dim=256,
-            block_out_channels=(32, 64),
-            norm_num_groups=8,  # ?
-            layers_per_block=2,
-            class_embed_type="simple_projection",
-            addition_embed_type="image",
-            projection_class_embeddings_input_dim=5,
-            class_embeddings_concat=True,
+        self.estimator = UNet2DConditionModelEMO(
+            n_spks=n_spks,
+            spk_emb_dim=spk_emb_dim,
+            psd_n=3,
+            n_feats=n_feats
         )
-        """
-        self.text_encoder = TextEncoder(
-            n_vocab,
-            n_feats,
-            n_enc_channels,
-            filter_channels,
-            filter_channels_dp,
-            n_heads,
-            n_enc_layers,
-            enc_kernel,
-            enc_dropout,
-            window_size)
-        """
 
     def forward_diffusion(self, x0, mask, mu, t):
         time = t.unsqueeze(-1).unsqueeze(-1)
@@ -125,17 +166,17 @@ class CondDiffusionLDM(BaseModule):
                           spk=None,
                           emo=None,
                           psd=None,
-                          emo_label=None,
+                          emo_label=None
                           ):
         """
         Denoising mel from z and mu, conditioned on
-        class labels: emolabel, spk, psd
-        encoder_hidden_states: ?
+        class labels: emolabel, spk, psd, encoder_hidden_states
+        (where sequential psd and encoder_hidden_states have been aligned)
 
         mel_len = 100 for length consistence
         Args:
-            z:      (b, mel_len, 80)
-            mask:   (b, mel_len, 1)
+            z:      (b, channel, mel_len, 80)
+            mask:   (b, 1, mel_len, 1)
             mu:     (b, mel_len, 80)
             n_timesteps: int
             stoc:   bool, default = False
@@ -148,7 +189,7 @@ class CondDiffusionLDM(BaseModule):
             xt:     (b, mel_len, 80)
         """
         h = 1.0 / n_timesteps
-        xt = z * mask
+        xt, psd = z * mask, psd * mask
 
         for i in range(n_timesteps):
             t = (1.0 - (i + 0.5) * h) * torch.ones(z.shape[0], dtype=z.dtype,
@@ -156,20 +197,18 @@ class CondDiffusionLDM(BaseModule):
             time = t.unsqueeze(-1).unsqueeze(-1)
             noise_t = get_noise(time, self.beta_min, self.beta_max,
                                 cumulative=False)
-            # added cond
-            added_cond_kwargs = {
-                "image_embeds": psd,
-                "spk": spk
-            }
             score_emo = self.estimator(
-                sample=torch.unsqueeze(xt, 1),      # (batch, channel, height, width)
+                sample=xt,      # (batch, channel, height, width)
                 timestep=t,
                 encoder_hidden_states=enc_hids,  # (batch, sequence_length, feature_dim)
                 class_labels=emo_label,
                 cross_attention_kwargs=None,
-                added_cond_kwargs=added_cond_kwargs,
-                encoder_attention_mask=torch.squeeze(enc_hids_mask, 2)
-            )["sample"].squeeze(1)
+                #added_cond_kwargs=added_cond_kwargs,
+                encoder_attention_mask=torch.squeeze(enc_hids_mask, 2),
+                spk=spk,
+                psd=psd,
+                sampleadd="concate",
+            )
             dxt_det = 0.5 * (mu - xt) - score_emo
 
             # adds stochastic term
@@ -183,7 +222,7 @@ class CondDiffusionLDM(BaseModule):
             else:
                 dxt = 0.5 * (mu - xt - score_emo)
                 dxt = dxt * noise_t * h
-            xt = (xt - dxt) * mask
+            xt = (xt - dxt) * mask.squeeze(1)
         return xt
 
     @torch.no_grad()
@@ -242,6 +281,11 @@ class CondDiffusionLDM(BaseModule):
                 hidden_stats2 = torch.concat(psd1, dim=1)
             else:
                 hidden_stats2 = None
+
+            # Combine sample and spk
+            spk = self.spk_mlp(self.spk_emb(spk))
+            spk = spk.unsqueeze(1).repeat(1, xt.shape[1], 1)
+            xt = torch.stack([xt, spk], 1)
 
             # Interpolate between score
             score_emo1 = self.estimator(
@@ -315,34 +359,27 @@ class CondDiffusionLDM(BaseModule):
                spk=None,
                emo=None,
                psd=None,
-               text=None,
-               text_mask=None,
-               emo_label=None
+               emo_label=None,
+               enc_hids=None,
+               enc_hids_mask=None
                ):
         xt, z = self.forward_diffusion(x0, mask, mu, t)
         time = t.unsqueeze(-1).unsqueeze(-1)
         cum_noise = get_noise(time, self.beta_min, self.beta_max, cumulative=True)
 
-        if emo is not None:
-            hidden_stats = emo
-        else:
-            hidden_stats = torch.concat(psd, dim=1)
-
-        # text
-        hidden_stats1 = self.text_encoder(text, text_mask)
-        # added cond
-        added_cond_kwargs = {
-            "psd": psd
-        }
         noise_estimation = self.estimator(
-            sample=xt,
+            sample=xt,  # (batch, channel, height, width)
             timestep=t,
-            encoder_hidden_states=hidden_stats1,
+            encoder_hidden_states=enc_hids,  # (batch, sequence_length, feature_dim)
             class_labels=emo_label,
             cross_attention_kwargs=None,
-            added_cond_kwargs=added_cond_kwargs,
-            encoder_attention_mask=text_mask
+            # added_cond_kwargs=added_cond_kwargs,
+            encoder_attention_mask=torch.squeeze(enc_hids_mask, 2),
+            spk=spk,
+            psd=psd,
+            sampleadd="concate",
         )
+
         noise_estimation *= torch.sqrt(1.0 - torch.exp(-cum_noise))
         loss = torch.sum((noise_estimation + z) ** 2) / (torch.sum(mask) * self.n_feats)
         return loss, xt
@@ -355,15 +392,22 @@ class CondDiffusionLDM(BaseModule):
                      offset=1e-5,
                      emo=None,
                      psd=None,
-                     emo_label=None):
+                     emo_label=None,
+                     enc_hids=None,
+                     enc_hids_mask=None
+                     ):
         t = torch.rand(x0.shape[0], dtype=x0.dtype, device=x0.device,
                        requires_grad=False)
         t = torch.clamp(t, offset, 1.0 - offset)
-        return self.loss_t(x0,
-                           mask,
-                           mu,
-                           t,
-                           spk,
-                           emo,
-                           psd,
-                           emo_label)
+        return self.loss_t(
+            x0=x0,
+            mask=mask,
+            mu=mu,
+            t=t,
+            spk=spk,
+            emo=emo,
+            psd=psd,
+            emo_label=emo_label,
+            enc_hids=enc_hids,
+            enc_hids_mask=enc_hids_mask
+        )

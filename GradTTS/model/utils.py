@@ -1,7 +1,7 @@
 """ from https://github.com/jaywalnut310/glow-tts """
 
 import torch
-
+import torch.nn.functional as F
 
 def sequence_mask(length, max_length=None):
     if max_length is None:
@@ -42,3 +42,33 @@ def generate_path(duration, mask):
 def duration_loss(logw, logw_, lengths):
     loss = torch.sum((logw - logw_)**2) / torch.sum(lengths)
     return loss
+
+
+def align_a2b(a, tr_seq_len, attn):
+    """
+    align tensor a to b (tr_seq_len) by attn, if attn with wrong sr_len or tr_len, then
+    1. padding when sr_len < tr_len
+    2. cutting when sr_len > tr_len
+    Args:
+        a: (b, dim, sr_len)
+        tr_seq_len:
+        attn: (b, sr_len, tr_len)
+    Returns:
+
+    """
+    # check whether length of x is same with psd
+    if attn.shape[1] == a.shape[2] and attn.shape[2] == tr_seq_len:
+        b = torch.matmul(a, attn)
+    else:
+        sr_seq_len = a.shape[2]
+        if tr_seq_len > sr_seq_len:
+            left_pad = int((tr_seq_len - sr_seq_len) / 2)
+            right_pad = tr_seq_len - left_pad - sr_seq_len
+            p1d = (left_pad, right_pad)
+            #b = a.permute(0, 2, 1)
+            b = F.pad(a, p1d, "constant", 0)  # (b, word_len, 80) -> # (b, mel_len, 80)
+            #b = b.permute(0, 2, 1)
+            # psd = psd.unsqueeze(1)  # (b, 1, mel_len, 80)
+        else:
+            b = a[:, :, :tr_seq_len]
+    return b

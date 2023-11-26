@@ -16,52 +16,15 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 #import params
-from model import GradTTS, CondGradTTS
+from model import GradTTS, CondGradTTS, CondGradTTSLDM
 from data import TextMelSpeakerDataset, TextMelSpeakerBatchCollate, TextMelSpeakerEmoDataset, TextMelSpeakerEmoBatchCollate
 from fastext_dataset import FastspeechDataset
 from utils import plot_tensor, save_plot
 from text.symbols import symbols
 import yaml
 from model.utils import fix_len_compatibility
+from torchsummary import summary
 
-"""
-train_filelist_path = params.train_filelist_path
-valid_filelist_path = params.valid_filelist_path
-cmudict_path = params.cmudict_path
-add_blank = params.add_blank
-n_spks = params.n_spks
-spk_emb_dim = params.spk_emb_dim
-
-log_dir = params.log_dir
-n_epochs = params.n_epochs
-batch_size = params.batch_size
-out_size = params.out_size
-learning_rate = params.learning_rate
-random_seed = params.seed
-
-n_enc_channels = params.n_enc_channels
-filter_channels = params.filter_channels
-filter_channels_dp = params.filter_channels_dp
-n_enc_layers = params.n_enc_layers
-enc_kernel = params.enc_kernel
-enc_dropout = params.enc_dropout
-n_heads = params.n_heads
-window_size = params.window_size
-
-n_feats = params.n_feats
-n_fft = params.n_fft
-sample_rate = params.sample_rate
-win_length = params.win_length
-hop_length = params.hop_length
-f_min = params.f_min
-f_max = params.f_max
-
-dec_dim = params.dec_dim
-beta_min = params.beta_min
-beta_max = params.beta_max
-pe_scale = params.pe_scale
-estimator_type = params.estimator_type
-"""
 
 def train_process_cond(configs):
     preprocess_config, model_config, train_config = configs
@@ -162,30 +125,29 @@ def train_process_cond(configs):
     # get test_batch size
     test_batch = test_dataset.sample_test_batch(size=3)
 
-    model = CondGradTTS(nsymbols,
-                        n_spks,
-                        spk_emb_dim,
-                        emo_emb_dim,
-                        n_enc_channels,
-                        filter_channels,
-                        filter_channels_dp,
-                        n_heads,
-                        n_enc_layers,
-                        enc_kernel,
-                        enc_dropout,
-                        window_size,
-                        n_feats,
-                        dec_dim,
-                        beta_min,
-                        beta_max,
-                        pe_scale,
-                        unet_type,
-                        att_type).cuda()
-    """
+    model = CondGradTTSLDM(
+        nsymbols,
+        n_spks,
+        spk_emb_dim,
+        emo_emb_dim,
+        n_enc_channels,
+        filter_channels,
+        filter_channels_dp,
+        n_heads,
+        n_enc_layers,
+        enc_kernel,
+        enc_dropout,
+        window_size,
+        n_feats,
+        dec_dim,
+        beta_min,
+        beta_max,
+        pe_scale,
+        att_type).cuda()
+
     print('Number of encoder parameters = %.2fm' % (model.encoder.nparams / 1e6))
     print('Number of decoder parameters = %.2fm' % (model.decoder.nparams / 1e6))
     print('Initializing optimizer...')
-    """
 
     if resume_epoch > 1:
         resume(ckpt, model, 1)
@@ -219,6 +181,8 @@ def train_process_cond(configs):
                     dur = item["dur"].cuda()
                 if "emo_label" in item.keys():
                     emo_label = item["emo_label"].cuda()
+                if "melstyle" in item.keys():
+                    melstyle = item["melstyle"].cuda()
 
                 i = int(spk.cpu())
                 y_enc, y_dec, attn = model(x,
@@ -229,8 +193,9 @@ def train_process_cond(configs):
                                            length_scale=length_scale,
                                            spk=spk,
                                            emo=emo,
-                                           psd=(pit, eng, dur),
-                                           emo_label=emo_label
+                                           #psd=(pit, eng, dur),
+                                           emo_label=emo_label,
+                                           melstyle=melstyle
                                            )
 
                 logger.add_image(f'image_{i}/generated_enc',
@@ -262,9 +227,13 @@ def train_process_cond(configs):
                 y, y_lengths = batch['y'].cuda(), batch['y_lengths'].cuda()
                 spk = batch['spk'].cuda()
                 #emo = batch['emo'].cuda()
+                """
                 pit = batch["pit"].cuda()
                 eng = batch["eng"].cuda()
                 dur = batch["dur"].cuda()
+                """
+                melstyle = batch["melstyle"].cuda()
+                melstyle_len = batch["melstyle_lengths"].cuda()  # Use it rather than x_mask
                 emo_label = batch["emo_label"].cuda()
 
                 dur_loss, prior_loss, diff_loss = model.compute_loss(x,
@@ -274,7 +243,8 @@ def train_process_cond(configs):
                                                                      spk=spk,
                                                                      out_size=out_size,
                                                                      emo=None,
-                                                                     psd=(pit, eng, dur),
+                                                                     #psd=(pit, eng, dur),
+                                                                     melstyle=melstyle,
                                                                      emo_label=emo_label
                                                                      )
                 loss = sum([dur_loss, prior_loss, diff_loss])

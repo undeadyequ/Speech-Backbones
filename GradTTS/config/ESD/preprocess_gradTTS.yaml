@@ -1,5 +1,5 @@
 dataset: "ESD"   # libri-tts or ljspeech, ESD
-datatype: "psd"  # psd, emo_embed, w2v
+datatype: "melstyle"  # psd, emo_embed, w2v, melstyle
 
 path:
   # Original embedding
