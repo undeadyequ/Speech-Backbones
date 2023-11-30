@@ -92,7 +92,7 @@ def test_CondGradTTSLDM():
         "stoc": stoc,
         "spk": torch.randint(0, speaker_n, (batch, )),
         "length_scale": length_scale,
-        "melstyle": torch.randn(batch, mel_max_len, mel_dim),
+        "melstyle": torch.randn(batch, mel_dim, mel_max_len),
         "emo_label": torch.tensor(emolabel, dtype=torch.float32),
     }
 

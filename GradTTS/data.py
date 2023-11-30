@@ -413,9 +413,9 @@ class TextMelSpeakerEmoBatchCollate(object):
             engs = torch.zeros((B, pit_max_length), dtype=torch.float32)
             durs = torch.zeros((B, pit_max_length), dtype=torch.float32)
         if "melstyle" in batch[0].keys():
-            melstyle_max_length = max([item["melstyle"].shape[1] for item in batch])
-            melstyle_dim = batch[0]["melstyle"].shape[-1]
-            melstyles = torch.zeros((B, melstyle_max_length, melstyle_dim), dtype=torch.float32)
+            melstyle_max_length = max([item["melstyle"].shape[2] for item in batch])
+            melstyle_dim = batch[0]["melstyle"].shape[1]
+            melstyles = torch.zeros((B, melstyle_dim, melstyle_max_length), dtype=torch.float32)
 
         y_lengths, x_lengths = [], []
         spk = []
@@ -440,7 +440,7 @@ class TextMelSpeakerEmoBatchCollate(object):
                 melstyle = item["melstyle"]
                 melstyle_lengths = []
                 melstyle_lengths.append(melstyle.shape[-1])
-                melstyles[i, :melstyle.shape[1], :] = melstyle[0]
+                melstyles[i, :, :melstyle.shape[2]] = melstyle[0]
             if "emo_label" in item.keys():
                 emo_ = item["emo_label"]
                 emo[i, :] = emo_

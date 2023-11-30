@@ -162,8 +162,7 @@ if __name__ == '__main__':
         ## Output -> out
         inference(params, chk_pt, syn_txt, time_steps, spk)
     if True:
-        # Inference speech with interpolation
-
+        # Inference speech with interpolationks
         emo_emb_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/iiv_reps/"
         time_steps = 100
         # between inter-emotion

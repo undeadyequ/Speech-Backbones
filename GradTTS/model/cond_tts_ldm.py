@@ -169,7 +169,7 @@ class CondGradTTSLDM(BaseModule):
             spk = self.spk_emb(spk)
         # 1. Get predicted length of Z (latent representation) from given x by an encoder (include duration prediction)
         ## Get encoder_outputs `mu_x` and log-scaled token durations `logw`
-        mu_x, logw, x_mask = self.encoder(x, x_lengths, spk)  # mu_x (b, mel_dim, pphnm_len)
+        mu_x, logw, x_mask = self.encoder(x, x_lengths, spk)  # mu_x: (b, mel_dim, phnm_len), logw: (b, 1, phnm_len)
 
         w = torch.exp(logw) * x_mask
         w_ceil = torch.ceil(w) * length_scale
@@ -178,13 +178,13 @@ class CondGradTTSLDM(BaseModule):
         y_max_length_ = fix_len_compatibility(y_max_length)
 
         ## Using obtained durations `w` construct alignment map `attn`
-        y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(x_mask.dtype)
-        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
-        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)  # (b, 1, pphnm_len, pmel_len)
+        y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(x_mask.dtype) # (b, 1, pmel_len)
+        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)                      # (b, 1, phnm_len, pmel_len)
+        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)  # (b, 1, phnm_len, pmel_len)
 
         ## Align encoded text and get mu_y
-        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
-        mu_y = mu_y.transpose(1, 2)                                     # (b, mel_dim, pmel_len)
+        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))  #
+        mu_y = mu_y.transpose(1, 2)                                      # (b, mel_dim, pmel_len)
         encoder_outputs = mu_y[:, :, :y_max_length]
 
         # 2. Sample Z from terminal distribution N(mu_y, I) or N(0, I)
@@ -198,26 +198,28 @@ class CondGradTTSLDM(BaseModule):
 
         # 3. Emb fix sized hidden states (emo, spk)
         spk = self.spk_mlp(spk)
-        spk = spk.unsqueeze(2).repeat(1, 1, z.shape[-1])  # (b, mel_dim, pmel_len)
+        spk = spk.unsqueeze(2).repeat(1, 1, mu_x.shape[-1])  # (b, mel_dim, pmel_len)
         if emo_label is not None:
             emo_label = emo_label.to(torch.float)
 
         # 4. Align sequential hidden states (to the length of the predicted phoneme-level)
         psd_aligned = None
         if psd is not None:
-            psd = torch.stack(psd, 1).permute(0, 2, 1)         # (b, psd_dim, psd_len)
+            psd = torch.stack(psd, 1).permute(0, 2, 1)         # (b, psd_dim, mel_len)
             psd = self.psd_mlp(psd)
             psd_aligned = align_a2b(psd.transpose(1, 2),
-                                  mu_y.shape[-1],
+                                  mu_x.shape[-1],
                                   attn.squeeze(1).transpose(1, 2))
         if melstyle is not None:
             melstyle = self.melstyle_mlp(melstyle.transpose(1, 2))
             psd_aligned = align_a2b(melstyle.transpose(1, 2),
-                                  mu_y.shape[-1],
-                                  attn.squeeze(1).transpose(1, 2))         # (b, mel_dim, pmel_len)
+                                  mu_x.shape[-1],
+                                  attn.squeeze(1).transpose(1, 2))         # (b, mel_dim, mel_len)
         # 5. Encode encoder hidden states
-        enc_hids = mu_x
-        enc_hids_mask = x_mask
+        #enc_hids = mu_x        # (b, mel_dim, phnm_len)
+        #enc_hids_mask = x_mask # (b, )
+        enc_hids = mu_x        # (b, mel_dim, phnm_len)
+        enc_hids_mask = x_mask # (b, )
 
         # 6. Generate sample by performing reverse dynamics
         decoder_outputs = self.decoder(
@@ -370,10 +372,11 @@ class CondGradTTSLDM(BaseModule):
 
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
         mu_x, logw, x_mask = self.encoder(x, x_lengths, spk)
+
         y_max_length = y.shape[-1]
 
         y_mask = sequence_mask(y_lengths, y_max_length).unsqueeze(1).to(x_mask)
-        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
+        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)                  # (b, 2)
 
         # Use MAS to find most likely alignment `attn` between text and mel-spectrogram
         with torch.no_grad():
@@ -382,9 +385,9 @@ class CondGradTTSLDM(BaseModule):
             y_square = torch.matmul(factor.transpose(1, 2), y ** 2)
             y_mu_double = torch.matmul(2.0 * (factor * mu_x).transpose(1, 2), y)
             mu_square = torch.sum(factor * (mu_x ** 2), 1).unsqueeze(-1)
-            log_prior = y_square - y_mu_double + mu_square + const
+            log_prior = y_square - y_mu_double + mu_square + const                # (b, phnm_len, mel_len)
 
-            attn = monotonic_align.maximum_path(log_prior, attn_mask.squeeze(1))
+            attn = monotonic_align.maximum_path(log_prior, attn_mask.squeeze(1))  # (b, phnm_len, mel_len)
             attn = attn.detach()
 
         # Compute loss between predicted log-scaled durations and those obtained from MAS
@@ -405,6 +408,7 @@ class CondGradTTSLDM(BaseModule):
             y_cut = torch.zeros(y.shape[0], self.n_feats, out_size, dtype=y.dtype, device=y.device)
             melstyle_cut = torch.zeros(y.shape[0], self.melstyle_n, out_size, dtype=y.dtype, device=y.device)
             enc_hids = torch.zeros(mu_x.shape[0], self.n_feats, out_size, dtype=mu_x.dtype, device=mu_x.device)
+            #enc_hids = torch.zeros(mu_y.shape[0], self.n_feats, out_size, dtype=mu_y.dtype, device=mu_y.device)
 
             y_cut_lengths = []
             enc_hids_lengths = []
@@ -455,23 +459,26 @@ class CondGradTTSLDM(BaseModule):
 
         # 3. Emb fix sized hidden states (emo, spk)
         spk = self.spk_mlp(spk)
-        spk = spk.unsqueeze(2).repeat(1, 1, mu_y.shape[-1])  # (b, mel_dim, pmel_len)
+        spk = spk.unsqueeze(2).repeat(1, 1, max_x_cut_length)  # (b, mel_dim, pmel_len)
         if emo_label is not None:
             emo_label = emo_label.to(torch.float)
 
         # 4. Align sequential hidden states (to the length of the predicted phoneme-level)
         psd_aligned = None
         if psd is not None:
-            psd = torch.stack(psd, 1).permute(0, 2, 1)  # (b, psd_dim, psd_len)
+            psd = torch.stack(psd, 1).permute(0, 2, 1)  # (b, psd_dim, mel_len)
             psd = self.psd_mlp(psd)
             psd_aligned = align_a2b(psd.transpose(1, 2),
-                                    mu_y.shape[-1],
-                                    attn.squeeze(1).transpose(1, 2))
+                                    mu_x.shape[-1],
+                                    attn.squeeze(1).transpose(1, 2))  # (b, psd_dim, phnm_len)
+            psd_aligned = psd_aligned[:, :, :max_x_cut_length]   # align to max_x_cut_length
         if melstyle is not None:
             melstyle = self.melstyle_mlp(melstyle.transpose(1, 2))
             psd_aligned = align_a2b(melstyle.transpose(1, 2),
-                                    mu_y.shape[-1],
-                                    attn.squeeze(1).transpose(1, 2))  # (b, mel_dim, pmel_len)
+                                    mu_x.shape[-1],
+                                    attn.squeeze(1).transpose(1, 2))  # (b, mel_dim, phnm_len)
+            psd_aligned = psd_aligned[:, :, :max_x_cut_length]
+
         # 5. Encode encoder hidden states
         #enc_hids = mu_x
         #enc_hids_mask = x_mask

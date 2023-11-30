@@ -40,17 +40,17 @@ class UNet2DConditionModelEMO(UNet2DConditionModel):
 
         self.unet_model = UNet2DConditionModel(
             sample_size=(80, 100),
-            in_channels=3,  # Number of channels in the input sample
+            in_channels=1,  # Number of channels in the input sample
             out_channels=1, #
             down_block_types=("DownBlock2D", "CrossAttnDownBlock2D"),
             mid_block_type="UNetMidBlock2DCrossAttn",
             up_block_types=("CrossAttnUpBlock2D", "UpBlock2D"),
-            encoder_hid_dim=80,
+            encoder_hid_dim=240,
             encoder_hid_dim_type="text_proj",
             #cross_attention_dim=256,
             cross_attention_dim=32,
             block_out_channels=(32, 64),
-            norm_num_groups=8,  # ?
+            norm_num_groups=4,  # ?
             layers_per_block=2,
             class_embed_type="simple_projection",
             #addition_embed_type="image",
@@ -74,28 +74,91 @@ class UNet2DConditionModelEMO(UNet2DConditionModel):
         spk: torch.LongTensor = None,
         psd: torch.FloatTensor = None,
         sampleadd: str = "concate",
-    ):
-        if psd is not None:
-            if sampleadd == "concate":
-                sample_concate = torch.stack([sample, spk, psd], 1)  # (b, 3, mel_dim, pmel_len)
-                #sample_concate_mask = sample_mask.unsqueeze(1)  # (b, 1, 1, pmel_len)
-            else:
-                sample_concate = sample + spk + psd
-                #sample_concate_mask = sample_mask
-        else:
-            sample_concate = torch.stack([sample, spk], 1)
-            #sample_concate_mask = sample_mask.unsqueeze(1)
+        guidance_scale: float = 7.5
 
-        sample = self.unet_model(
-            sample=sample_concate,  # (batch, channel, height, width)
+    ):
+        """
+
+        Args:
+            sample:
+            timestep:
+            encoder_hidden_states:
+            class_labels:
+            timestep_cond:
+            attention_mask:
+            cross_attention_kwargs:
+            added_cond_kwargs:
+            down_block_additional_residuals:
+            mid_block_additional_residual:
+            encoder_attention_mask:
+            return_dict:
+            spk:
+            psd:
+            sampleadd:
+            guidance_scale:
+            --------------Conditional--------------------
+            enc_hids: # (b, pmel_len, mel_dim)
+            spk:      (b, spk_emb) if exist else NONE
+            psd:      (b, pmel_len, psd_dim)    # psd has been aligned to pmel_len
+            emo_label: (b, 1, emo_n)
+            ---------------------------------------------
+
+
+        Returns:
+
+        """
+        sample = sample.unsqueeze(1)
+
+        # Get conditional embeddings (emo_label, psd, melstyle, text)
+        ## Extend length to pmel_len
+        #spk = spk.unsqueeze(1).repeat(1, encoder_hidden_states.shape[1], 1)
+        #class_labels = class_labels.repeat(1, encoder_hidden_states.shape[1], 1)
+        #assert encoder_hidden_states.shape[1] == psd.shape[1]
+        enc_hid_cond = torch.concat([encoder_hidden_states, spk, psd], dim=2) # All are aligned to mel-length
+        #sample_concate = torch.stack([sample, spk, psd], 1)  # (b, 3, mel_dim, pmel_len)
+        #sample_concate_mask = sample_mask.unsqueeze(1)  # (b, 1, 1, pmel_len)
+        # Get unconditional embeddings for classifier free guidance
+        do_classifier_free_guidance = guidance_scale > 1.0
+
+
+        if do_classifier_free_guidance:
+            encoder_hidden_uncond = torch.zeros_like(encoder_hidden_states, device=encoder_hidden_states.device)
+            psd_uncond = torch.zeros_like(psd, device=psd.device)
+            spk_uncond = torch.zeros_like(spk, device=spk.device)
+            #class_labels_uncond = torch.zeros_like(class_labels, device=class_labels.device)
+
+            enc_hid_uncond = torch.concat(
+                [encoder_hidden_uncond, spk_uncond, psd_uncond], dim=2)
+
+            # combine uncond and cond enc_hid
+            enc_hid = torch.concat([enc_hid_cond, enc_hid_uncond])
+
+            sample = torch.cat([sample] * 2) if do_classifier_free_guidance else sample
+            timestep = torch.cat([timestep] * 2) if do_classifier_free_guidance else timestep
+            class_labels = torch.cat([class_labels] * 2) if do_classifier_free_guidance else class_labels
+            encoder_attention_mask = torch.cat([encoder_attention_mask] * 2) if do_classifier_free_guidance \
+                else encoder_attention_mask
+        else:
+            enc_hid = enc_hid_cond
+
+        # get noise residual
+        noise_pred = self.unet_model(
+            sample=sample,  # (batch, height, width)
             timestep=timestep,
-            encoder_hidden_states=encoder_hidden_states,  # (batch, sequence_length, feature_dim)
+            encoder_hidden_states=enc_hid,  # (batch, sequence_length, feature_dim)
             class_labels=class_labels,
             cross_attention_kwargs=None,
             # added_cond_kwargs=added_cond_kwargs,
             encoder_attention_mask=encoder_attention_mask,
         )
-        return sample["sample"].squeeze(1)
+        noise_pred = noise_pred["sample"].squeeze(1)
+
+        if do_classifier_free_guidance:
+            noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+        else:
+            noise_pred = sample
+        return noise_pred
 
 
 
@@ -175,21 +238,24 @@ class CondDiffusionLDM(BaseModule):
 
         mel_len = 100 for length consistence
         Args:
-            z:      (b, channel, mel_len, 80)
-            mask:   (b, 1, mel_len, 1)
-            mu:     (b, mel_len, 80)
+            z:        (b, pmel_len, 80)
+            mask:     (b, )
+            mu:       0
             n_timesteps: int
             stoc:   bool, default = False
-            spk:    (b, spk_emb) if exist else  NONE
-            emo:    (b, emo_emb) if exist else  NONE
-            psd:    (b, psd_len, psd_dim)   psd_len is not mel_len, psd_dim = 3 when eng/pitch/dur, psd=256 when wav2vector
+            --------------Conditional--------------------
+            enc_hids: # (b, pmel_len, mel_dim)
+            spk:      (b, pmel_len, spk_emb) if exist else NONE
+            psd:      (b, pmel_len, psd_dim)    # psd has been aligned to pmel_len
             emo_label: (b, 1, emo_n)
-
+            ---------------------------------------------
+            enc_hids_mask: # (b,)
+            emo:      Not used
         Returns:
             xt:     (b, mel_len, 80)
         """
         h = 1.0 / n_timesteps
-        xt, psd = z * mask, psd * mask
+        xt, psd = z * mask, psd * enc_hids_mask
 
         for i in range(n_timesteps):
             t = (1.0 - (i + 0.5) * h) * torch.ones(z.shape[0], dtype=z.dtype,

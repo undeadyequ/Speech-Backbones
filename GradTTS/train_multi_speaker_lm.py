@@ -213,7 +213,6 @@ def train_process_cond(configs):
                           f'{log_dir}/generated_dec_{i}.png')
                 save_plot(attn.squeeze().cpu(),
                           f'{log_dir}/alignment_{i}.png')
-                break
 
         model.train()
         dur_losses = []
@@ -281,8 +280,8 @@ def train_process_cond(configs):
         with open(f'{log_dir}/train.log', 'a') as f:
             f.write(msg)
 
-        if epoch % params.save_every > 0:
-            continue
+        #if epoch % params.save_every > 0:
+        #    continue
 
         ckpt = model.state_dict()
         torch.save(ckpt, f=f"{log_dir}/grad_{epoch}.pt")

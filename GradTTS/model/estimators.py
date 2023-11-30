@@ -79,7 +79,7 @@ class GradLogPEstimator2dCond(BaseModule):
         mid_dim = dims[-1]
         self.mid_block1 = ResnetBlock(mid_dim, mid_dim, time_emb_dim=dim)
         self.mid_attn = Residual(Rezero(LinearAttention(mid_dim) if att_type == "linear" else
-                                        torch.nn.MultiheadAttention(embed_dim=128, num_heads=8)))
+                                        torch.nn.MultihseadAttention(embed_dim=128, num_heads=8)))
         self.mid_block2 = ResnetBlock(mid_dim, mid_dim, time_emb_dim=dim)
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
