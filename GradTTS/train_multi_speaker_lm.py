@@ -14,6 +14,7 @@ from tqdm import tqdm
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn as nn
 
 #import params
 from model import GradTTS, CondGradTTS, CondGradTTSLDM
@@ -39,7 +40,7 @@ def train_process_cond(configs):
     add_blank = preprocess_config["feature"]["add_blank"]
     sample_rate = preprocess_config["feature"]["sample_rate"]
     nsymbols = len(symbols) + 1 if add_blank else len(symbols)
-    out_size = fix_len_compatibility(2 * sample_rate // 256)
+    out_size = fix_len_compatibility(2 * sample_rate // 256)  # 2s
     preprocess_dir = preprocess_config["path"]["preprocessed_path"]
     train_filelist_path = preprocess_dir + "/train.txt"
     valid_filelist_path = preprocess_dir + "/val.txt"
@@ -125,6 +126,7 @@ def train_process_cond(configs):
     # get test_batch size
     test_batch = test_dataset.sample_test_batch(size=3)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = CondGradTTSLDM(
         nsymbols,
         n_spks,
@@ -143,7 +145,9 @@ def train_process_cond(configs):
         beta_min,
         beta_max,
         pe_scale,
-        att_type).cuda()
+        att_type)
+    #model = nn.DataParallel(model)
+    model.to(device)
 
     print('Number of encoder parameters = %.2fm' % (model.encoder.nparams / 1e6))
     print('Number of decoder parameters = %.2fm' % (model.decoder.nparams / 1e6))

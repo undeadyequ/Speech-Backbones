@@ -164,11 +164,14 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--checkpoint',
                         type=str,
                         required=False,
-                        default="grad_33.pt",
+                        default="grad_57.pt",
                         help='path to a checkpoint of Grad-TTS')
-    parser.add_argument('-t', '--timesteps', type=int, required=False, default=50, help='number of timesteps of reverse diffusion')
-    parser.add_argument('-s', '--speaker_id', type=int, required=False, default=19, help='speaker id for multispeaker model')
-    parser.add_argument('-e', '--emo_label', type=str, required=False, default="Angry")
+    parser.add_argument('-t', '--timesteps', type=int, required=False,
+                        default=100, help='number of timesteps of reverse diffusion')
+    parser.add_argument('-s', '--speaker_id', type=int, required=False,
+                        default=15, help='speaker id for multispeaker model')
+    parser.add_argument('-e', '--emo_label', type=str, required=False,
+                        default="Sad")
 
     args = parser.parse_args()
 
@@ -187,7 +190,7 @@ if __name__ == '__main__':
         "Neutral": "",
         "Happy": ""
     }
-    logs_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/crossatt_diffuser/"
+    logs_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/crossatt_diffuser_nopriorloss/"
     config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
     melstyle_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/emo_reps"
 
@@ -215,7 +218,10 @@ if __name__ == '__main__':
     configs = (preprocess_config, model_config, train_config)
 
     # output
-    out_dir = f"{logs_dir}wav_chpt{time_steps}"
+    chpt_n = args.checkpoint.split(".")[0].split("_")[1]
+    out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{args.speaker_id}_emo{emo_label}"
+    if not os.path.isdir(out_dir):
+        Path(out_dir).mkdir(exist_ok=True)
 
     INTERPOLATE_INFERENCE = False
     # inference without interpolation
@@ -246,7 +252,7 @@ if __name__ == '__main__':
         emo2 = torch.from_numpy(np.load(emo_emb_dir + ang1).squeeze(0)).cuda()
 
         # 1. interpolate score
-        inference_emo_interpolation(params, chk_pt, syn_txt, time_steps, spk, emo1, emo2, out_dir)
+        #inference_emo_interpolation(params, chk_pt, syn_txt, time_steps, spk, emo1, emo2, out_dir)
 
         # 2. Interpolate z
 

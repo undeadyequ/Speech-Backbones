@@ -1,8 +1,8 @@
 encoder:
   n_enc_channels: 128    # origin: 192
-  filter_channels: 256   # origin: 768
-  filter_channels_dp: 256  # origin: 256
-  n_enc_layers: 6
+  filter_channels: 128   # origin: 768
+  filter_channels_dp: 128  # origin: 256
+  n_enc_layers: 2
   enc_kernel: 3
   enc_dropout: 0.1
   n_heads: 2
