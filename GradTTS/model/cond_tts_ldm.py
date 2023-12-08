@@ -218,10 +218,8 @@ class CondGradTTSLDM(BaseModule):
             stoc=stoc,
             enc_hids=enc_hid_cond.permute(0, 2, 1),
             enc_hids_mask=enc_hids_mask.permute(0, 2, 1),
-        )
-        #decoder_outputs = decoder_outputs[:, :, :y_max_length]
-        #attn = attn[:, :y_max_length, :]
-        return z, decoder_outputs, attn[:, :, :y_max_length]  # ??
+        )  # (b, pmel_len, 80)
+        return z[:, :, :y_max_length], decoder_outputs[:, :y_max_length, :], attn[:, :, :, :y_max_length]
 
     def compute_loss(self,
                      x,
@@ -327,7 +325,7 @@ class CondGradTTSLDM(BaseModule):
             attn = attn_cut
             y = y_cut
             y_mask = y_cut_mask
-            enc_hid_cond = enc_hid_cond_cut[:, :, :max_x_cut_length]   # ??
+            enc_hid_cond = enc_hid_cond_cut[:, :, :max_x_cut_length]
 
         # Align encoded text with mel-spectrogram and get mu_y segment
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
