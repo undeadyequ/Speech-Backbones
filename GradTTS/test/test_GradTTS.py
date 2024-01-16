@@ -4,12 +4,11 @@ sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
 
 import torch
 import yaml
-from GradTTS.model.cond_tts_ldm import CondGradTTSLDM
-
-from GradTTS.model.cond_diffusion_ldm import CondDiffusionLDM
+from GradTTS.model.cond_tts import CondGradTTS
+from GradTTS.model.cond_diffusion import CondDiffusion
 from GradTTS.text.symbols import symbols
 
-def test_CondGradTTSLDM():
+def test_CondGradTTS():
     config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
     train_config = config_dir + "/train_gradTTS.yaml"
     preprocess_config = config_dir + "/preprocess_gradTTS.yaml"
@@ -65,17 +64,15 @@ def test_CondGradTTSLDM():
     text_max_len = 31
     psd_max_len = 31
     mel_max_len = 50
-    mel_dim = 768
-    mel_emb_dim = 80
-    speaker_n = 64
+    speaker_n = 10
     style_emb_dim = 786
+    mel_emb_dim = 80
     speech_len = 70
 
     emolabel = [[0] * emo_emb_dim, [0] * emo_emb_dim]
     emolabel[0][-1] = 1
     emolabel[0][0] = 1
 
-    # "emo": torch.randn(2, text_n),
     """
     "psd": (
         torch.randn(batch, psd_max_len),
@@ -84,31 +81,31 @@ def test_CondGradTTSLDM():
     ),
     """
 
-
-
     TEST_REVERSE = True
     TEST_COMPUTE_LOSS = False
 
-    model = CondGradTTSLDM(
-        nsymbols,
-        n_spks,
-        spk_emb_dim,
-        emo_emb_dim,
-        n_enc_channels,
-        filter_channels,
-        filter_channels_dp,
-        n_heads,
-        n_enc_layers,
-        enc_kernel,
-        enc_dropout,
-        window_size,
-        n_feats,
-        dec_dim,
-        beta_min,
-        beta_max,
-        pe_scale,
-        att_type
-    )
+    # test condition
+    att_type = "crossAtt"  # "linear"
+    model = CondGradTTS(nsymbols,
+                        n_spks,
+                        spk_emb_dim,
+                        emo_emb_dim,
+                        n_enc_channels,
+                        filter_channels,
+                        filter_channels_dp,
+                        n_heads,
+                        n_enc_layers,
+                        enc_kernel,
+                        enc_dropout,
+                        window_size,
+                        n_feats,
+                        dec_dim,
+                        beta_min,
+                        beta_max,
+                        pe_scale,
+                        unet_type,
+                        att_type
+                        )
 
     if TEST_REVERSE:
         inputs_value = {
@@ -119,23 +116,20 @@ def test_CondGradTTSLDM():
             "stoc": stoc,
             "spk": torch.randint(0, speaker_n, (batch,)),
             "length_scale": length_scale,
-            "melstyle": torch.randn(batch, mel_dim, mel_max_len),
-            "emo_label": torch.tensor(emolabel, dtype=torch.float32),
+            "psd": (None, None, None),
+            #"emo": torch.randn(batch, style_emb_dim),
+            "melstyle": torch.randn(batch, style_emb_dim, mel_max_len),
+            #"emo_label": torch.tensor(emolabel, dtype=torch.int64),
+            "emo_label": None,
         }
+        output = model(**inputs_value)
 
-        # test forward
-        # decoder output: attn
-        z, decoder_outputs, attn = model(**inputs_value)
-        print(decoder_outputs.size(),
-              attn.size())
-        assert decoder_outputs.size()[2] == 80
-        assert decoder_outputs.size()[1] > text_max_len  # predicted mel len > text len
-        assert attn.size()[2] == text_max_len
-        assert attn.size()[3] == decoder_outputs.size()[1]
+        # encoder_outputs, decoder_outputs, attn
+        print(output[0].size(),
+              output[1].size(),
+              output[2].size())
 
     if TEST_COMPUTE_LOSS:
-        # test forward
-        # decoder output: attn
         inputs_value_train = {
             "x": torch.randint(0, text_n, (batch, text_max_len)),
             "x_lengths": torch.randint(0, text_max_len, (batch,)),
@@ -143,12 +137,14 @@ def test_CondGradTTSLDM():
             "y_lengths": torch.randint(0, mel_max_len, (batch,)),
             "spk": torch.randint(0, speaker_n, (batch,)),
             "out_size": 172,
-            "melstyle": torch.randn(batch, mel_dim, mel_max_len),
-            "emo_label": torch.tensor(emolabel, dtype=torch.float32),
+            "psd": (None, None, None),
+            "melstyle": torch.randn(batch, style_emb_dim, mel_max_len),
+            #"emo_label": torch.tensor(emolabel, dtype=torch.float32),
+            "emo_label": None,
         }
         dur_loss, prior_loss, diff_loss = model.compute_loss(**inputs_value_train)
-        print(dur_loss, prior_loss.size(), diff_loss.size())
+        print(dur_loss, prior_loss, diff_loss)
 
 
 if __name__ == '__main__':
-    test_CondGradTTSLDM()
+    test_CondGradTTS()

@@ -30,7 +30,7 @@ from pathlib import Path
 
 #HIFIGAN_CONFIG = './checkpts/hifigan-config.json'
 #HIFIGAN_CHECKPT = './checkpts/hifigan.pt'
-HIFIGAN_CONFIG = './checkpts/config.json'
+HIFIGAN_CONFIG = './checkpts/hifigan-config.json' # ./checkpts/config.json
 HIFIGAN_CHECKPT = './checkpts/generator_v3'
 
 def inference(params, chk_pt, syn_txt, time_steps, spk):
@@ -132,53 +132,47 @@ def inference_emo_interpolation(params, chk_pt, syn_txt, time_steps, spk, emo1, 
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-f', '--file', type=str, required=False,
-                        default="resources/filelists/synthesis.txt",
-                        help='path to a file with texts to synthesize')
-    parser.add_argument('-c', '--checkpoint', type=str, required=False,
-                        default="/home/rosen/Project/Speech-Backbones/Grad-TTS/logs/ESD_gradtts_local/grad_11.pt",
-                        #default="/home/rosen/Project/Speech-Backbones/Grad-TTS/logs/ESD_gradtts/grad_27.pt",
-                        help='path to a checkpoint of Grad-TTS')
-    parser.add_argument('-t', '--timesteps', type=int, required=False, default=50, help='number of timesteps of reverse diffusion')
-    parser.add_argument('-s', '--speaker_id', type=int, required=False, default=19, help='speaker id for multispeaker model')
-    args = parser.parse_args()
-    
-    if not isinstance(args.speaker_id, type(None)):
-        assert params.n_spks > 1, "Ensure you set right number of speakers in `params.py`."
-        spk = torch.LongTensor([args.speaker_id]).cuda()
+    ## experiment dictionary
+    exp_dict = {
+        "origin": "ESD_gradtts_local",
+        "txt_style_cross_gtts": "gradtts_crossSelf_v2"
+    }
+
+    ## INPUT
+    syn_txt = "resources/filelists/synthesis.txt"
+    ckpt_dir = "/home/rosen/Project/Speech-Backbones/Grad-TTS/logs/gradtts_crossSelf_v2/"
+    ckpt = ckpt_dir + "grad_45.pt"
+    spk_id = 19
+    time_step = 50
+
+    if not isinstance(spk_id, type(None)):
+        spk = torch.LongTensor([spk_id]).cuda()
     else:
         spk = None
 
+    ## Output
+    out_dir = ckpt_dir + f"syn_speech/ckpt{time_step}"
 
-    # Inference speech from text and spkid, given checkpoint
-    ## Input
-    chk_pt = args.checkpoint
+    INFERENCE_SINGLE = True
+    INFERENCE_INTER_EMO = False
 
-    syn_txt = args.file
-    time_steps = args.timesteps
-
-    if False:
+    if INFERENCE_SINGLE:
         ## Output -> out
-        inference(params, chk_pt, syn_txt, time_steps, spk)
-    if True:
-        # Inference speech with interpolationks
+        inference(params, ckpt, syn_txt, time_step, spk)
+    if INFERENCE_INTER_EMO:
+        ## INPUT2
         emo_emb_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/iiv_reps/"
-        time_steps = 100
-        # between inter-emotion
         sad1 = "0019_001115.npy"
         ang1 = "0019_000508.npy"
-        chk_pt = "/home/rosen/Project/Speech-Backbones/Grad-TTS/logs/ESD_gradtts/grad_22.pt"
+        # between inter-emotion
 
-        out_dir = f"out/chpt{time_steps}"
+        out_dir = f"out/chpt{time_step}"
         # between inner-emotion
         # between inner-emotion and different intensity
         emo1 = torch.from_numpy(np.load(emo_emb_dir + sad1).squeeze(0)).cuda()
         emo2 = torch.from_numpy(np.load(emo_emb_dir + ang1).squeeze(0)).cuda()
 
         # 1. interpolate score
-        inference_emo_interpolation(params, chk_pt, syn_txt, time_steps, spk, emo1, emo2, out_dir)
+        inference_emo_interpolation(params, ckpt, syn_txt, time_step, spk, emo1, emo2, out_dir)
 
         # 2. Interpolate z
-
-

@@ -65,55 +65,29 @@ def test_CondGradTTS():
     psd_max_len = 31
     mel_max_len = 50
     speaker_n = 10
-    style_emb_dim = 786
+    style_emb_dim = 768
+    mel_emb_dim = 80
     speech_len = 70
 
     emolabel = [[0] * emo_emb_dim, [0] * emo_emb_dim]
     emolabel[0][-1] = 1
     emolabel[0][0] = 1
 
-    inputs_value = {
-        "x": torch.randint(0, text_n, (batch, text_max_len)),
-        "x_lengths": torch.randint(0, text_max_len, (batch, )),
-        "n_timesteps": n_timesteps,
-        "temperature": temperature,
-        "stoc": stoc,
-        "spk": torch.randint(0, speaker_n, (batch, )),
-        "length_scale": length_scale,
-        #"emo": torch.randn(2, text_n),
-        "psd": (
-            torch.randn(batch, psd_max_len),
-            torch.randn(batch, psd_max_len),
-            torch.randn(batch, psd_max_len),
-        ),
-        "emo_label": torch.tensor(emolabel, dtype=torch.int64),
-    }
     """
-    x = torch.,
-    x_lengths,
-    n_timesteps=n_timesteps,
-    temperature=temperature,
-    stoc=stoc,
-    length_scale=length_scale,
-    spk=spk,
-    emo=emo,
-    psd=(pit, eng, dur),
-    emolabel = emoLabel
+    "psd": (
+        torch.randn(batch, psd_max_len),
+        torch.randn(batch, psd_max_len),
+        torch.randn(batch, psd_max_len),
+    ),
+    """
 
-    [str(l) for l in list(range(0, batch))],
-    [str(l) for l in list(range(100, 100 + batch))],
-    torch.randint(0, speaker_n, (batch,)),
-    torch.randint(0, text_n, (batch, text_max_len)),
-    torch.randint(0, speaker_n, (batch,)),
-    text_max_len,
-    torch.randn((batch, mel_max_len, 80)),
-    torch.randint(0, mel_max_len, (batch,)),
-    mel_max_len,
-    torch.randn(batch, text_max_len),
-    torch.randn(batch, text_max_len),
-    torch.randint(0, 10, (batch, text_max_len)),
-    torch.randn(batch, style_emb_dim),
-    """
+    TEST_REVERSE = False
+    TEST_COMPUTE_LOSS = True
+
+    # test condition
+    att_type = "cross"  # "linear"
+    #att_type = "linear"  # "linear"
+
     model = CondGradTTS(nsymbols,
                         n_spks,
                         spk_emb_dim,
@@ -134,12 +108,46 @@ def test_CondGradTTS():
                         unet_type,
                         att_type
                         )
-    output = model(**inputs_value)
 
-    #
-    print(output[0].size(),
-          output[1].size(),
-          output[2].size())
+    if TEST_REVERSE:
+        inputs_value = {
+            "x": torch.randint(0, text_n, (batch, text_max_len)),
+            "x_lengths": torch.randint(0, text_max_len, (batch,)),
+            "n_timesteps": n_timesteps,
+            "temperature": temperature,
+            "stoc": stoc,
+            "spk": torch.randint(0, speaker_n, (batch,)),
+            "length_scale": length_scale,
+            "psd": (None, None, None),
+            #"emo": torch.randn(batch, style_emb_dim),
+            "melstyle": torch.randn(batch, style_emb_dim, mel_max_len),
+            "emo_label": torch.tensor(emolabel, dtype=torch.int64)
+        }
+        output = model(**inputs_value)
+
+        # encoder_outputs, decoder_outputs, attn
+        print("print encoder_outputs: {}, decoder_outputs: {}, attn: {}".format(
+            output[0].size(),
+            output[1].size(),
+            output[2].size())
+        )
+
+    if TEST_COMPUTE_LOSS:
+        inputs_value_train = {
+            "x": torch.randint(0, text_n, (batch, text_max_len)),
+            "x_lengths": torch.randint(0, text_max_len, (batch,)),
+            "y": torch.randn(batch, mel_emb_dim, mel_max_len),
+            "y_lengths": torch.randint(0, mel_max_len, (batch,)),
+            "spk": torch.randint(0, speaker_n, (batch,)),
+            "out_size": 172,
+            #"psd": (None, None, None),
+            "melstyle": torch.randn(batch, style_emb_dim, mel_max_len),
+            "emo_label": torch.tensor(emolabel, dtype=torch.float32),
+            #"emo_label": None,
+        }
+        dur_loss, prior_loss, diff_loss = model.compute_loss(**inputs_value_train)
+        print(dur_loss, prior_loss, diff_loss)
+
 
 if __name__ == '__main__':
     test_CondGradTTS()

@@ -72,3 +72,39 @@ def align_a2b(a, tr_seq_len, attn):
         else:
             b = a[:, :, :tr_seq_len]
     return b
+
+
+def align(
+        condition,
+        align_len,
+        align_att=None,
+        condtype="noseq",
+):
+    """
+    a: (b, dim, sr_len)
+    tr_seq_len:
+    attn: (b, sr_len, tr_len)
+
+    Args:
+        condition: (b, x_len/y_len, dim) or (b, dim)
+        align_len: scalar
+        align_att: (x_len, y_len)
+        condtype:
+
+    Returns:
+        cond_aligned: (b, x_len/y_len, dim)
+    """
+    if condtype == "seq":
+        if align_att is not None:
+            cond_aligned = align_a2b(condition.transpose(1, 2),
+                                     align_len,
+                                     align_att.squeeze(1).transpose(1, 2))
+        else:
+            print("attn_mtx should not be NONE!!")
+        return cond_aligned
+    elif condtype == "noseq":
+        cond_aligned = condition.unsqueeze(2).repeat(1, 1, align_len)   # (b, mel_dim, pmel_len)
+    else:
+        print("wrong condtype!")
+
+    return cond_aligned

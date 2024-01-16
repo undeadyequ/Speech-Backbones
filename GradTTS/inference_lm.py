@@ -32,11 +32,19 @@ import yaml
 
 #HIFIGAN_CONFIG = './checkpts/hifigan-config.json'
 #HIFIGAN_CHECKPT = './checkpts/hifigan.pt'
-HIFIGAN_CONFIG = './checkpts/config.json'
-HIFIGAN_CHECKPT = './checkpts/generator_v3'
+#HIFIGAN_CONFIG = './checkpts/config.json'
+#HIFIGAN_CHECKPT = './checkpts/generator_v3'
+
+HIFIGAN_CONFIG = './checkpts/hifigan-config.json' # ./checkpts/config.json
+HIFIGAN_CHECKPT = './checkpts/hifigan.pt'
+
 
 
 def get_model(configs, model="gradtts_lm"):
+    """
+    Get Model
+
+    """
     preprocess_config, model_config, train_config = configs
 
     # parameter
@@ -92,21 +100,42 @@ def get_model(configs, model="gradtts_lm"):
             beta_max,
             pe_scale,
             att_type)
-    else:
-        return 0
+    elif model == "gradtts_cross":
+        return CondGradTTS(nsymbols,
+                            n_spks,
+                            spk_emb_dim,
+                            emo_emb_dim,
+                            n_enc_channels,
+                            filter_channels,
+                            filter_channels_dp,
+                            n_heads,
+                            n_enc_layers,
+                            enc_kernel,
+                            enc_dropout,
+                            window_size,
+                            n_feats,
+                            dec_dim,
+                            beta_min,
+                            beta_max,
+                            pe_scale,
+                            unet_type,
+                            att_type)
+
+
 def inference(configs,
+              model_name,
               chk_pt,
               syn_txt=None,
               time_steps=50,
               spk=None,
               emo_label=None,
               melstyle=None,
-              out_dir=None):
+              out_dir=None
+              ):
 
-    # get model
-
+    # Get model
     print('Initializing Grad-TTS...')
-    generator = get_model(configs, "gradtts_lm")
+    generator = get_model(configs, model_name)
     generator.load_state_dict(torch.load(chk_pt, map_location=lambda loc, storage: loc))
     _ = generator.cuda().eval()
 
@@ -130,23 +159,110 @@ def inference(configs,
             x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
 
             t = dt.datetime.now()
-            y_enc, y_dec, attn = generator.forward(x,
-                                                   x_lengths,
-                                                   n_timesteps=time_steps,
-                                                   temperature=1.5,
-                                                   stoc=True,
-                                                   spk=spk,
-                                                   length_scale=0.91,
-                                                   emo_label=emo_label,
-                                                   #ref_speech=None,
-                                                   melstyle=melstyle,
-                                                   )
-            y_dec = y_dec.transpose(1, 2)
+            if model_name == "gradtts_lm":
+                y_enc, y_dec, attn = generator.forward(x,
+                                                       x_lengths,
+                                                       n_timesteps=time_steps,
+                                                       temperature=1.5,
+                                                       stoc=True,
+                                                       spk=spk,
+                                                       length_scale=0.91,
+                                                       emo_label=emo_label,
+                                                       #ref_speech=None,
+                                                       melstyle=melstyle,
+                                                       )
+                y_dec = y_dec.transpose(1, 2)
+            elif model_name == "gradtts_cross":
+                y_enc, y_dec, attn = generator.forward(x,
+                                                       x_lengths,
+                                                       n_timesteps=time_steps,
+                                                       temperature=1.5,
+                                                       stoc=True,
+                                                       length_scale=0.91,
+                                                       spk=spk,
+                                                       emo_label=emo_label,
+                                                       melstyle=melstyle,
+                                                       )
             t = (dt.datetime.now() - t).total_seconds()
             print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
             audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
             write(f'{out_dir}/sample_{i}.wav', 22050, audio)
     print('Done. Check out `out` folder for samples.')
+
+
+def inference_interp(configs,
+              model_name,
+              chk_pt,
+              syn_txt=None,
+              time_steps=50,
+              spk=None,
+              emo_label1=None,
+              melstyle1=None,
+              emo_label2=None,
+              melstyle2=None,
+              out_dir=None
+              ):
+
+    # Get model
+    print('Initializing Grad-TTS...')
+    generator = get_model(configs, model_name)
+    generator.load_state_dict(torch.load(chk_pt, map_location=lambda loc, storage: loc))
+    _ = generator.cuda().eval()
+
+    print(f'Number of parameters: {generator.nparams}')
+    print('Initializing HiFi-GAN...')
+    with open(HIFIGAN_CONFIG) as f:
+        h = AttrDict(json.load(f))
+    vocoder = HiFiGAN(h)
+    vocoder.load_state_dict(torch.load(HIFIGAN_CHECKPT, map_location=lambda loc, storage: loc)['generator'])
+    _ = vocoder.cuda().eval()
+    vocoder.remove_weight_norm()
+
+    with open(syn_txt, 'r', encoding='utf-8') as f:
+        texts = [line.strip() for line in f.readlines()]
+    cmu = cmudict.CMUDict('./resources/cmu_dictionary')
+
+    with torch.no_grad():
+        for i, text in enumerate(texts):
+            print(f'Synthesizing {i} text...', end=' ')
+            x = torch.LongTensor(intersperse(text_to_sequence(text, dictionary=cmu), len(symbols))).cuda()[None]
+            x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
+
+            t = dt.datetime.now()
+            if model_name == "gradtts_lm":
+                y_enc, y_dec, attn = generator.forward(x,
+                                                       x_lengths,
+                                                       n_timesteps=time_steps,
+                                                       temperature=1.5,
+                                                       stoc=True,
+                                                       spk=spk,
+                                                       length_scale=0.91,
+                                                       emo_label=emo_label1,
+                                                       #ref_speech=None,
+                                                       melstyle=melstyle1,
+                                                       )
+                y_dec = y_dec.transpose(1, 2)
+            elif model_name == "gradtts_cross":
+                y_enc, y_dec, attn = generator.reverse_diffusion_interp(
+                    x,
+                    x_lengths,
+                    n_timesteps=time_steps,
+                    temperature=1.5,
+                    stoc=True,
+                    length_scale=0.91,
+                    spk=spk,
+                    emo_label1=emo_label1,
+                    melstyle1=melstyle1,
+                    emo_label2=emo_label2,
+                    melstyle2=melstyle2,
+                )
+
+            t = (dt.datetime.now() - t).total_seconds()
+            print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
+            audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
+            write(f'{out_dir}/sample_{i}.wav', 22050, audio)
+    print('Done. Check out `out` folder for samples.')
+
 
 
 def get_emo_label(emo: str, emo_value=1):
@@ -164,7 +280,7 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--checkpoint',
                         type=str,
                         required=False,
-                        default="grad_57.pt",
+                        default="grad_55.pt",
                         help='path to a checkpoint of Grad-TTS')
     parser.add_argument('-t', '--timesteps', type=int, required=False,
                         default=100, help='number of timesteps of reverse diffusion')
@@ -190,7 +306,9 @@ if __name__ == '__main__':
         "Neutral": "",
         "Happy": ""
     }
-    logs_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/crossatt_diffuser_nopriorloss/"
+    logs_dir_par = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
+    logs_dir = logs_dir_par + "gradtts_crossSelf_v2/"
+
     config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
     melstyle_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/emo_reps"
 
@@ -216,17 +334,21 @@ if __name__ == '__main__':
     train_config = yaml.load(open(
         config_dir + "/train_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
     configs = (preprocess_config, model_config, train_config)
+    model_name = "gradtts_cross"
 
-    # output
     chpt_n = args.checkpoint.split(".")[0].split("_")[1]
-    out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{args.speaker_id}_emo{emo_label}"
-    if not os.path.isdir(out_dir):
-        Path(out_dir).mkdir(exist_ok=True)
 
+    NO_INTERPOLATION = True
     INTERPOLATE_INFERENCE = False
     # inference without interpolation
-    if not INTERPOLATE_INFERENCE:
+    if NO_INTERPOLATION:
+        # OUTPUT
+        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{args.speaker_id}_emo{emo_label}"
+        if not os.path.isdir(out_dir):
+            Path(out_dir).mkdir(exist_ok=True)
+
         inference(configs,
+                  model_name,
                   chk_pt,
                   syn_txt=syn_txt,
                   time_steps=time_steps,
@@ -237,15 +359,41 @@ if __name__ == '__main__':
                   )
 
     if INTERPOLATE_INFERENCE:
-        # Inference speech with interpolationks
-        emo_emb_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/iiv_reps/"
+        # INPUT
         time_steps = 100
-        # between inter-emotion
         sad1 = "0019_001115.npy"
         ang1 = "0019_000508.npy"
-        chk_pt = "/home/rosen/Project/Speech-Backbones/Grad-TTS/logs/ESD_gradtts/grad_22.pt"
+        melstyle_sad = torch.from_numpy(np.load(melstyle_dir + "/" + sad1)).unsqueeze(0).transpose(1, 2).cuda()
+        melstyle_ang = torch.from_numpy(np.load(melstyle_dir + "/" + ang1)).unsqueeze(0).transpose(1, 2).cuda()
 
-        out_dir = f"out/chpt{time_steps}"
+        emo_label1 = "Sad"
+        emo_label2 = "Angry"
+        emo_label_sad = torch.LongTensor(get_emo_label(emo_label1)).cuda()
+        emo_label_ang = torch.LongTensor(get_emo_label(emo_label2)).cuda()
+
+        # output
+        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{args.speaker_id}_{emo_label1}_{emo_label2}"
+        if not os.path.isdir(out_dir):
+            Path(out_dir).mkdir(exist_ok=True)
+
+        inference_interp(
+            configs,
+            model_name,
+            chk_pt,
+            syn_txt=syn_txt,
+            time_steps=time_steps,
+            spk=spk_tensor,
+            emo_label1=emo_label_sad,
+            melstyle1=melstyle_sad,
+            emo_label2=emo_label_ang,
+            melstyle2=melstyle_ang,
+            out_dir=out_dir
+        )
+
+        # 1. interpolate score
+        # inference_emo_interpolation(params, chk_pt, syn_txt, time_steps, spk, emo1, emo2, out_dir)
+
+        """
         # between inner-emotion
         # between inner-emotion and different intensity
         emo1 = torch.from_numpy(np.load(emo_emb_dir + sad1).squeeze(0)).cuda()
@@ -255,5 +403,4 @@ if __name__ == '__main__':
         #inference_emo_interpolation(params, chk_pt, syn_txt, time_steps, spk, emo1, emo2, out_dir)
 
         # 2. Interpolate z
-
-
+        """

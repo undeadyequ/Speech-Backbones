@@ -213,7 +213,7 @@ class CondGradTTSLDM(BaseModule):
         decoder_outputs = self.decoder(
             z.permute(0, 2, 1),
             z_mask.permute(0, 2, 1),
-            mu=0,
+            mu=mu_y.permute(0, 2, 1) if USE_MUY else 0,
             n_timesteps=n_timesteps,
             stoc=stoc,
             enc_hids=enc_hid_cond.permute(0, 2, 1),
@@ -368,7 +368,6 @@ class CondGradTTSLDM(BaseModule):
             psd_aligned = align_a2b(melstyle.transpose(1, 2),
                                     align_target_len,
                                     attn.squeeze(1).transpose(1, 2))  # (b, mel_dim, mel_len)
-
         spk = self.spk_mlp(spk)
         spk_align = spk.unsqueeze(2).repeat(1, 1, align_target_len)  # (b, mel_dim, pmel_len)
         emo_label = emo_label.to(torch.float)
@@ -400,8 +399,6 @@ def get_cut_range_x(attn, cut_lower, cut_upper):
     except IOError:
         print("cut_upper_x {} is empty:".format(cut_upper_x))
     """
-
-
     #print("cut_lower_x, cut_upper_x:{}, {}".format(cut_lower_x, cut_upper_x))
     return cut_lower_x, cut_upper_x
 

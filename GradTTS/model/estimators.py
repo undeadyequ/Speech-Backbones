@@ -3,12 +3,14 @@ from einops import rearrange
 import math
 import torch
 import torch.nn.functional as F
-from model.base import BaseModule
-from model.diffusion import *
+from GradTTS.model.base import BaseModule
+from GradTTS.model.diffusion import *
+from GradTTS.model.utils import align
 
 class GradLogPEstimator2dCond(BaseModule):
     def __init__(self,
                  dim,
+                 sample_channel_n=2,
                  dim_mults=(1, 2, 4),
                  groups=8,
                  n_spks=None,
@@ -16,7 +18,8 @@ class GradLogPEstimator2dCond(BaseModule):
                  n_feats=80,
                  pe_scale=1000,
                  emo_emb_dim=768,
-                 att_type="linear"
+                 att_type="linear",
+                 att_dim=128
                  ):
         """
 
@@ -48,19 +51,16 @@ class GradLogPEstimator2dCond(BaseModule):
                                            torch.nn.Linear(emo_emb_dim, n_feats))
         self.psd_mlp = torch.nn.Sequential(torch.nn.Linear(3, 16), Mish(),
                                            torch.nn.Linear(16, n_feats))
+        self.enc_hid_dim = n_feats * 3
 
         self.time_pos_emb = SinusoidalPosEmb(dim)
-        self.mlp = torch.nn.Sequential(torch.nn.Linear(dim, dim * 4), Mish(),
-                                       torch.nn.Linear(dim * 4, dim))
+        self.t_mlp = torch.nn.Sequential(torch.nn.Linear(dim, dim * 4), Mish(),
+                                         torch.nn.Linear(dim * 4, dim))
+        # sample channel
+        total_dim = sample_channel_n + (1 if n_spks > 1 else 0)  # 4 include spk, emo, psd, x
+        # enc_hid channel
 
-        #
-        if self.att_type == "linear":
-            total_dim = 4 + (1 if n_spks > 1 else 0)  # 4 include spk, emo, psd, x
-        elif self.att_type == "crossAtt":
-            total_dim = 2 + (1 if n_spks > 1 else 0)  # 4 include spk, emo, psd, x
-        else:
-            total_dim = 0
-            print("input linear or crossAtt")
+
         dims = [total_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
         self.downs = torch.nn.ModuleList([])
@@ -70,29 +70,45 @@ class GradLogPEstimator2dCond(BaseModule):
         for ind, (dim_in, dim_out) in enumerate(in_out):
             is_last = ind >= (num_resolutions - 1)
             self.downs.append(torch.nn.ModuleList([
+                # Sample
                 ResnetBlock(dim_in, dim_out, time_emb_dim=dim),
                 ResnetBlock(dim_out, dim_out, time_emb_dim=dim),
+                # att_dim=int(80 / 2 ** ind) ???
                 Residual(Rezero(LinearAttention(dim_out) if att_type == "linear" else
-                                torch.nn.MultiheadAttention(embed_dim=128, num_heads=8))),
+                                MultiAttention2(dim_out, self.enc_hid_dim, att_dim))),  # Rezero is Not usefull ??  or MultiAttention
                 Downsample(dim_out) if not is_last else torch.nn.Identity()]))
 
         mid_dim = dims[-1]
         self.mid_block1 = ResnetBlock(mid_dim, mid_dim, time_emb_dim=dim)
+        # enc_hid (ResnetBlock)...
         self.mid_attn = Residual(Rezero(LinearAttention(mid_dim) if att_type == "linear" else
-                                        torch.nn.MultihseadAttention(embed_dim=128, num_heads=8)))
+                                        MultiAttention2(mid_dim, self.enc_hid_dim, att_dim)))
         self.mid_block2 = ResnetBlock(mid_dim, mid_dim, time_emb_dim=dim)
+        # enc_hid (Downsample)...
 
+        ft_dims = int(80 / 2 ** (len(dim_mults) - 1))
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
             self.ups.append(torch.nn.ModuleList([
                 ResnetBlock(dim_out * 2, dim_in, time_emb_dim=dim),
                 ResnetBlock(dim_in, dim_in, time_emb_dim=dim),
                 Residual(Rezero(LinearAttention(dim_in) if att_type == "linear" else
-                                torch.nn.MultiheadAttention(embed_dim=128, num_heads=8))),
+                                MultiAttention2(dim_in, self.enc_hid_dim, att_dim))),
                 Upsample(dim_in)]))
         self.final_block = Block(dim, dim)
         self.final_conv = torch.nn.Conv2d(dim, 1, 1)
 
-    def forward(self, x, mask, mu, t, spk=None, txt=None, emo_label=None, psd=None):
+    def forward(self,
+                x,
+                mask,
+                mu,
+                t,
+                spk=None,
+                psd=None,
+                melstyle=None,
+                emo_label=None,
+                align_len=None,
+                align_mtx=None
+                ):
         """
 
         att_type option
@@ -110,15 +126,34 @@ class GradLogPEstimator2dCond(BaseModule):
             spk: (b, spk_emb)
             emo_label: (b, 1, emo_num)
             psd [tuple]: ((b, word_len), (b, word_len), (b, word_len))
+            melstyle: (b, 80, mel_len)
         Returns:
             output: (b, 80, mel_len)
         """
-        # Project conditioning value to 80 dims for concatenating with X
+        # Regulize Unet input1: xt and enc_hids
+        if align_len is not None:
+            spk_align = align(spk, align_len, condtype="noseq")
+            emo_label_align = align(emo_label, align_len, condtype="noseq")
+            if align_mtx is not None:   # Only for inference
+                melstyle = align(melstyle, align_len, align_mtx, condtype="seq")
+
+        # Concatenate condition by different attention
+        if self.att_type == "linear":
+            x = torch.stack([x, mu, spk_align, emo_label_align], 1)
+            hids = None
+        elif self.att_type == "cross":
+            x = torch.stack([x, mu], 1)
+            hids = torch.concat([spk_align, melstyle, emo_label_align], dim=1)
+            #hids = torch.stack([spk_align, melstyle, emo_label_align], dim=1)
+        else:
+            print("bad att type!")
+
+        """
         if not isinstance(spk, type(None)):
             s = self.spk_mlp(spk)
         if not isinstance(emo_label, type(None)):
             emo_label = self.emo_mlp(emo_label)  # (b, 1, 80)
-        if not isinstance(psd, type(None)):
+        if not len(psd) > 0:
             psd = [p1.to(torch.float) for p1 in psd]
             psd = torch.stack(psd, 0)
             psd = torch.permute(psd, (1, 0, 2))
@@ -126,18 +161,15 @@ class GradLogPEstimator2dCond(BaseModule):
                 psd = torch.permute(psd, (0, 2, 1))
                 psd = self.psd_mlp(psd)  # (b, word_len, 80)
                 psd = torch.permute(psd, (0, 2, 1))  # (b, 80, word_len)
-
-        t = self.time_pos_emb(t, scale=self.pe_scale)
-        t = self.mlp(t)  # (b, 1, 4*dim)
-
-        hids = []
-
+        """
+        """
         # create sequential dimension for speaker and emotion
         if self.n_spks >= 2 and spk is not None:
             s = s.unsqueeze(-1).repeat(1, 1, x.shape[-1])
             x = torch.stack([x, mu, s], 1)  # (b, 3, 80, mel_len)
         else:
             x = torch.stack([mu, x], 1)     # (b, 2, 80, mel_len)
+
         if emo_label is not None:
             if self.att_type == "linear":   # ? Condition method: directly
                 emo_label = emo_label.unsqueeze(-1).repeat(1, 1, x.shape[-1]).unsqueeze(1)  # (b, 1, 80, mel_len)
@@ -145,8 +177,8 @@ class GradLogPEstimator2dCond(BaseModule):
             else:
                 hids = emo_label
 
-        # align sequential dimension for psd
-        if psd is not None:
+        # align sequential dimension
+        if psd[0] is not None:
             if self.att_type == "linear":
                 # [temporary] pad psd from word_len to mel_len(100)
                 if True:
@@ -165,30 +197,30 @@ class GradLogPEstimator2dCond(BaseModule):
                     hids = torch.cat([hids, psd], 1)
                 else:
                     hids = psd
+        """
+
+        # Regulize Unet input2: Time projection
+        t = self.time_pos_emb(t, scale=self.pe_scale)
+        t = self.t_mlp(t)
 
         mask = mask.unsqueeze(1)
         hiddens = []
         masks = [mask]
+
         for resnet1, resnet2, attn, downsample in self.downs:
             mask_down = masks[-1]
-            x = resnet1(x, mask_down, t)
-            x = resnet2(x, mask_down, t)
-            if self.att_type == "linear":
-                x = attn(x)
-            else:
-                x = attn(query=x, key=hids, value=hids)
+            x = resnet1(x, mask_down, t)   # (b, c, d, l) -> (b, c_out_i, d, l)
+            x = resnet2(x, mask_down, t)   # -> (b, c_out_i, d, l)
+            x = attn(x) if self.att_type == "linear" else attn(x, key=hids, value=hids) #  -> (b, c_out_i, d, l)
             hiddens.append(x)
-            x = downsample(x * mask_down)
+            x = downsample(x * mask_down)  # -> (b, c_out_i, d/2, l/2)
             masks.append(mask_down[:, :, :, ::2])
 
         masks = masks[:-1]
         mask_mid = masks[-1]
 
         x = self.mid_block1(x, mask_mid, t)
-        if self.att_type == "linear":
-            x = self.mid_attn(x)
-        else:
-            x = self.mid_attn(query=x, key=emo_label, value=emo_label)
+        x = self.mid_attn(x) if self.att_type == "linear" else self.mid_attn(x, hids, hids)
         x = self.mid_block2(x, mask_mid, t)
 
         for resnet1, resnet2, attn, upsample in self.ups:
@@ -196,13 +228,8 @@ class GradLogPEstimator2dCond(BaseModule):
             x = torch.cat((x, hiddens.pop()), dim=1)
             x = resnet1(x, mask_up, t)
             x = resnet2(x, mask_up, t)
-            if self.att_type == "linear":
-                x = attn(x)
-            else:
-                x = attn(query=x, key=emo_label, value=emo_label)
+            x = attn(x) if self.att_type == "linear" else attn(x, hids, hids)
             x = upsample(x * mask_up)
-
         x = self.final_block(x, mask)
         output = self.final_conv(x * mask)
-
         return (output * mask).squeeze(1)

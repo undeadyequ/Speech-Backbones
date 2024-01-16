@@ -258,7 +258,8 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
     def get_emo(self, basename):
         iiv_path = os.path.join(
             self.preprocessed_path,
-            "iiv_reps",
+            #"iiv_reps",
+            "iiv_reps_iteronly",
             "{}.npy".format(basename),
         )
         iiv = torch.from_numpy(np.load(iiv_path).squeeze(0))
@@ -312,7 +313,7 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         return speaker
 
     def __getitem__(self, index):
-        if self.datatype == "emo":
+        if self.datatype == "emo_embed":
             text, mel, speaker, emo = self.get_fourthlet(self.filelist[index])
             item = {'y': mel, 'x': text, 'spk': speaker, "emo": emo}
         elif self.datatype == "psd":
@@ -405,7 +406,8 @@ class TextMelSpeakerEmoBatchCollate(object):
         # emo_label
         if "emo_label" in batch[0].keys():
             emo = torch.zeros((B, batch[0]["emo_label"].shape[-1]), dtype=torch.float32)
-        # Set length of sequential dataset
+        if "emo" in batch[0].keys():
+            emo_emb = torch.zeros((B, batch[0]["emo"].shape[-1]), dtype=torch.float32)        # Set length of sequential dataset
         ## psd
         if "pit" in batch[0].keys():
             pit_max_length = max([item["pit"].shape[-1] for item in batch])
@@ -441,13 +443,16 @@ class TextMelSpeakerEmoBatchCollate(object):
                 melstyle_lengths = []
                 melstyle_lengths.append(melstyle.shape[-1])
                 melstyles[i, :, :melstyle.shape[2]] = melstyle[0]
+                melstyle_lengths = torch.LongTensor(melstyle_lengths)
             if "emo_label" in item.keys():
                 emo_ = item["emo_label"]
                 emo[i, :] = emo_
+            if "emo" in item.keys():
+                emo_emb_ = item["emo"]
+                emo_emb[i, :] = emo_emb_
 
         y_lengths = torch.LongTensor(y_lengths)
         x_lengths = torch.LongTensor(x_lengths)
-        melstyle_lengths = torch.LongTensor(melstyle_lengths)
         spk = torch.cat(spk, dim=0)
         # emo = torch.FloatTensor(emo)
 
@@ -474,4 +479,10 @@ class TextMelSpeakerEmoBatchCollate(object):
                     "psd_lengths": psd_lengths
                     }
         else:
-            return {}
+            return {'x': x,
+                    'x_lengths': x_lengths,
+                    'y': y,
+                    'y_lengths': y_lengths,
+                    'spk': spk,
+                    "emo": emo_emb,
+                    }

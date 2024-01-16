@@ -24,7 +24,6 @@ from utils import plot_tensor, save_plot
 from text.symbols import symbols
 import yaml
 from model.utils import fix_len_compatibility
-from torchsummary import summary
 
 
 def train_process_cond(configs):
@@ -90,7 +89,7 @@ def train_process_cond(configs):
     learning_rate = float(train_config["learning_rate"])
     n_epochs = int(train_config["n_epochs"])
     resume_epoch = int(train_config["resume_epoch"])
-    ckpt = f"/home/rosen/Project/Speech-Backbones/Grad-TTS/logs/ESD_gradtts_local/grad_{resume_epoch}.pt"
+    ckpt = f"{log_dir}grad_{resume_epoch}.pt"
 
     # dataset
     train_dataset = TextMelSpeakerEmoDataset(train_filelist_path,
@@ -245,8 +244,6 @@ def train_process_cond(configs):
                                                                      y_lengths,
                                                                      spk=spk,
                                                                      out_size=out_size,
-                                                                     emo=None,
-                                                                     #psd=(pit, eng, dur),
                                                                      melstyle=melstyle,
                                                                      emo_label=emo_label
                                                                      )
@@ -323,19 +320,19 @@ if __name__ == "__main__":
         type=str,
         #required=True,
         help="path to preprocess.yaml",
-        default=config_dir + "/preprocess_gradTTS.yaml",
+        default=config_dir + "/preprocess_gradTTS_diffuser.yaml",
     )
     parser.add_argument(
         "-m", "--model_config", type=str,
         #required=True,
         help="path to model.yaml",
-        default=config_dir + "/model_gradTTS.yaml"
+        default=config_dir + "/model_gradTTS_diffuser.yaml"
     )
     parser.add_argument(
         "-t", "--train_config", type=str,
         #required=True,
         help="path to train.yaml",
-        default=config_dir + "/train_gradTTS.yaml"
+        default=config_dir + "/train_gradTTS_diffuser.yaml"
     )
     args = parser.parse_args()
 

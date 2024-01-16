@@ -42,8 +42,8 @@ class Rezero(BaseModule):
         self.fn = fn
         self.g = torch.nn.Parameter(torch.zeros(1))
 
-    def forward(self, x):
-        return self.fn(x) * self.g
+    def forward(self, x, *args, **kwargs):
+        return self.fn(x, *args, **kwargs) * self.g
 
 
 class Block(BaseModule):
@@ -80,6 +80,9 @@ class ResnetBlock(BaseModule):
 
 
 class LinearAttention(BaseModule):
+    """
+    d_q, d_k, d_v = len_qkv * ft_dim
+    """
     def __init__(self, dim, heads=4, dim_head=32):
         super(LinearAttention, self).__init__()
         self.heads = heads
@@ -88,10 +91,10 @@ class LinearAttention(BaseModule):
         self.to_out = torch.nn.Conv2d(hidden_dim, dim, 1)            
 
     def forward(self, x):
-        b, c, h, w = x.shape
-        qkv = self.to_qkv(x)
+        b, c, h, w = x.shape  # b, c, dim, len
+        qkv = self.to_qkv(x)  # b, dim_heads * 3 (qkv) * head, dim, len
         q, k, v = rearrange(qkv, 'b (qkv heads c) h w -> qkv b heads c (h w)', 
-                            heads = self.heads, qkv=3)            
+                            heads=self.heads, qkv=3)  # 2, head, dim_heads, dim * len
         k = k.softmax(dim=-1)
         context = torch.einsum('bhdn,bhen->bhde', k, v)
         out = torch.einsum('bhde,bhdn->bhen', context, q)
@@ -99,6 +102,116 @@ class LinearAttention(BaseModule):
                         heads=self.heads, h=h, w=w)
         return self.to_out(out)
 
+class MultiAttention2(BaseModule):
+    def __init__(self, dim_in_q, dim_in_k, att_dim, heads=4):
+        super(MultiAttention2, self).__init__()
+
+        #hidden_dim = heads * att_dim
+        self.W_Q = torch.nn.Conv2d(dim_in_q, att_dim * heads, 1, bias=False)
+        # ?? W_k/W_V linear(dim_in, att_dim * head)
+        self.W_K = torch.nn.Linear(dim_in_k, att_dim * heads)
+        self.W_V = torch.nn.Linear(dim_in_k, att_dim * heads)
+
+        #self.concat = torch.nn.Linear(att_dim, att_dim)
+        self.to_out = torch.nn.Linear(att_dim * heads, dim_in_q)
+        self.heads = heads
+        self.att_dim = att_dim
+
+    def forward(self, input_Q, key=None, value=None, attn_mask=None):
+        """
+
+        Args:
+            input_Q: (b, c, d_q, l_q)   c = dim_in_q
+            key:    (b, d_k, l_k)       d_k = dim_in_k
+            value:  (b, d_k, l_k)
+            attn_mask:
+        Returns:
+            out:  (b, c, d_q, l_q)
+        """
+
+        b, c, d_q, l_q = input_Q.shape
+        d_k, l_k = key.shape[1], key.shape[2]
+
+        residual = input_Q.view(b, c, d_q * l_q).transpose(1, 2)  # (b, d_q * l_q, c)  ?? transpose works same as view ??
+        Q = (
+            self.W_Q(input_Q).view(b, self.heads, -1, d_q, l_q)
+        )  # IN: (b, c, d_q, l_q) -> (b, d_m * h, d_q, l_q) -> (b, h, d_m, d_q, l_q) # its good to seperate?
+        Q = Q.view(b, self.heads, self.att_dim,  d_q * l_q).transpose(2, 3) # -> (b, h, l_q * d_q, d_m)  <- att_dim = h * d_m
+
+        K = (
+            self.W_K(key.transpose(1, 2)).view(b, self.heads, l_k, -1)
+        )  # OUT: (b, h, l_k, d_m)  <- att_dim = h * d_m
+        V = (
+            self.W_V(value.transpose(1, 2)).view(b, self.heads, l_k, -1)
+        )  # OUT: (b, h, l_k, d_m)
+        context, attn = ScaledDotProductionAttention()(Q, K, V, attn_mask)   # (b, h, d_q * l_q, d_m)
+        #context = context.view(b, self.heads, d_q, l_q, -1)
+        context = torch.cat(
+            [context[:, i, :, :] for i in range(context.size(1))], dim=-1)   # (b, d_q * l_q, d_m * h)
+
+        output = self.to_out(context)    # -> (b, d_q * l_q, c)
+        output = output + residual       # -> (b, d_q * l_q, c)
+        if output.get_device() == -1:
+            output = torch.nn.LayerNorm(c)(output).transpose(1, 2)      # (b, c, d_q * l_q)
+            output = output.view(b, c, d_q, l_q)                        # (b, c, d_q, l_q)
+        else:
+            output = torch.nn.LayerNorm(c).cuda()(output).transpose(1, 2)  # (b, c, d_q * l_q)
+            output = output.view(b, c, d_q, l_q)
+        return output
+
+
+class ScaledDotProductionAttention(BaseModule):
+    def __init__(self, dropout: float = None, scale: bool = True):
+        super(ScaledDotProductionAttention, self).__init__()
+        if dropout is not None:
+            self.dropout = torch.nn.Dropout(p=dropout)
+        else:
+            self.dropout = dropout
+        self.softmax = torch.nn.Softmax(dim=2)
+        self.scale = scale
+
+    def forward(self, q, k, v, att_mask=None):
+        """
+        Args:
+            q: (b, h, q, d)
+            k: (b, h, k, d)
+            v: (b, h, k, d)
+            att_mask:
+        Returns:
+            out: (b, h, q, d)
+            att: (b, h, q, k)
+        """
+        attn = torch.einsum('bhqd,bhkd->bhqk', q, k)
+        if self.scale:
+            dimension = torch.as_tensor(k.size(-1), dtype=attn.dtype, device=attn.device).sqrt()
+            attn = attn / dimension
+        if att_mask is not None:
+            attn = attn.masked_fill(att_mask, -1e9)
+        attn = self.softmax(attn)
+        if self.dropout is not None:
+            attn = self.dropout(attn)
+        output = torch.einsum('bhqk,bhkd->bhqd', attn, v)
+        return output, attn
+
+class MultiAttention(BaseModule):
+    def __init__(self, dim_in, att_dim=80):
+        super(MultiAttention, self).__init__()
+        self.dim_in = dim_in
+        self.block1 = torch.nn.Sequential(torch.nn.Conv2d(dim_in, 1, 3,
+                                         padding=1), Mish())  # 4d -> 3d
+        #self.block2 = torch.nn.Sequential(torch.nn.Conv2d(1, dim_in, 1, padding=1))
+        self.prj = torch.nn.Linear(240, att_dim)   # dim_kv -> dim_q
+        self.mlthead = torch.nn.MultiheadAttention(embed_dim=att_dim, num_heads=2, batch_first=True)
+    def forward(self, x, key, value):
+        x = self.block1(x)
+        x = x.squeeze(1).transpose(1, 2)   # (b, c, d, l_q) -> # (b, d, l_q)
+        key = self.prj(key.transpose(1, 2))
+        value = self.prj(value.transpose(1, 2)) # (b, 240, l_kv) -> # (b, 80, l_kv)
+        #x = self.mlthead(x.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2))
+        x = self.mlthead(x, key, value)   # (b, d, l_q)
+
+        x_res = x[0].unsqueeze(1).repeat(1, self.dim_in, 1, 1)
+        return x_res.transpose(2, 3)
 
 class Residual(BaseModule):
     def __init__(self, fn):

@@ -66,7 +66,7 @@ else:
         AutoPipelineForImage2Image,
         AutoPipelineForInpainting,
         AutoPipelineForText2Image,
-        CLIPImageProjection,
+        #CLIPImageProjection,
         ConsistencyModelPipeline,
         DanceDiffusionPipeline,
         DDIMPipeline,

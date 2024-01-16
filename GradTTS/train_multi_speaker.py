@@ -126,7 +126,8 @@ def train_process_cond(configs):
     learning_rate = float(train_config["learning_rate"])
     n_epochs = int(train_config["n_epochs"])
     resume_epoch = int(train_config["resume_epoch"])
-    ckpt = f"/home/rosen/Project/Speech-Backbones/Grad-TTS/logs/ESD_gradtts_local/grad_{resume_epoch}.pt"
+    save_every = int(train_config["save_every"])
+    ckpt = f"{log_dir}grad_{resume_epoch}.pt"
 
     # dataset
     train_dataset = TextMelSpeakerEmoDataset(train_filelist_path,
@@ -181,6 +182,7 @@ def train_process_cond(configs):
                         pe_scale,
                         unet_type,
                         att_type).cuda()
+    print(model)
     """
     print('Number of encoder parameters = %.2fm' % (model.encoder.nparams / 1e6))
     print('Number of decoder parameters = %.2fm' % (model.decoder.nparams / 1e6))
@@ -219,6 +221,8 @@ def train_process_cond(configs):
                     dur = item["dur"].cuda()
                 if "emo_label" in item.keys():
                     emo_label = item["emo_label"].cuda()
+                if "melstyle" in item.keys():
+                    melstyle = item["melstyle"].cuda()
 
                 i = int(spk.cpu())
                 y_enc, y_dec, attn = model(x,
@@ -228,9 +232,10 @@ def train_process_cond(configs):
                                            stoc=stoc,
                                            length_scale=length_scale,
                                            spk=spk,
-                                           emo=emo,
-                                           psd=(pit, eng, dur),
-                                           emo_label=emo_label
+                                           #emo=emo,
+                                           #psd=(pit, eng, dur),
+                                           emo_label=emo_label,
+                                           melstyle=melstyle
                                            )
 
                 logger.add_image(f'image_{i}/generated_enc',
@@ -248,7 +253,6 @@ def train_process_cond(configs):
                           f'{log_dir}/generated_dec_{i}.png')
                 save_plot(attn.squeeze().cpu(),
                           f'{log_dir}/alignment_{i}.png')
-                break
 
         model.train()
         dur_losses = []
@@ -262,9 +266,9 @@ def train_process_cond(configs):
                 y, y_lengths = batch['y'].cuda(), batch['y_lengths'].cuda()
                 spk = batch['spk'].cuda()
                 #emo = batch['emo'].cuda()
-                pit = batch["pit"].cuda()
-                eng = batch["eng"].cuda()
-                dur = batch["dur"].cuda()
+
+                melstyle = batch["melstyle"].cuda()
+                melstyle_len = batch["melstyle_lengths"].cuda()  # Use it rather than x_mask
                 emo_label = batch["emo_label"].cuda()
 
                 dur_loss, prior_loss, diff_loss = model.compute_loss(x,
@@ -273,8 +277,9 @@ def train_process_cond(configs):
                                                                      y_lengths,
                                                                      spk=spk,
                                                                      out_size=out_size,
-                                                                     emo=None,
-                                                                     psd=(pit, eng, dur),
+                                                                     emo=emo,
+                                                                     #psd=(pit, eng, dur),
+                                                                     melstyle=melstyle,
                                                                      emo_label=emo_label
                                                                      )
                 loss = sum([dur_loss, prior_loss, diff_loss])
@@ -311,7 +316,7 @@ def train_process_cond(configs):
         with open(f'{log_dir}/train.log', 'a') as f:
             f.write(msg)
 
-        if epoch % params.save_every > 0:
+        if epoch % save_every > 0:
             continue
 
         ckpt = model.state_dict()
@@ -366,7 +371,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Train on Libritts dataset
+    # Train on ljspeech dataset
     if False:
         train_filelist_path = 'resources/filelists/ljspeech/train.txt'
         valid_filelist_path = 'resources/filelists/ljspeech/valid.txt'
@@ -383,4 +388,5 @@ if __name__ == "__main__":
         train_config = yaml.load(open(args.train_config, "r"), Loader=yaml.FullLoader)
         configs = (preprocess_config, model_config, train_config)
         # Output
+        # log_dir: "./logs/crossatt_diffuser/"
         train_process_cond(configs)

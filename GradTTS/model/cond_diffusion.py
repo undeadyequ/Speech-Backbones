@@ -10,9 +10,9 @@ from einops import rearrange
 import math
 import torch
 import torch.nn.functional as F
-from model.base import BaseModule
-from model.diffusion import *
-from model.estimators import GradLogPEstimator2dCond
+from GradTTS.model.base import BaseModule
+from GradTTS.model.diffusion import *
+from GradTTS.model.estimators import GradLogPEstimator2dCond
 
 # diffuser
 from src.diffusers import UNet2DConditionModel
@@ -32,7 +32,7 @@ class CondDiffusion(BaseModule):
                  beta_min=0.05,
                  beta_max=20,
                  pe_scale=1000,
-                 unet_type="origin",
+                 data_type="melstyle",
                  att_type="linear"
                  ):
         """
@@ -55,36 +55,24 @@ class CondDiffusion(BaseModule):
         self.beta_min = beta_min
         self.beta_max = beta_max
         self.pe_scale = pe_scale
-        self.unet_type = unet_type
+        self.data_type = data_type
         self.att_type = att_type
 
         # choose unit model
-        if unet_type == "origin":
-            self.estimator = GradLogPEstimator2dCond(dim,
-                                                     n_spks=n_spks,
-                                                     spk_emb_dim=spk_emb_dim,
-                                                     pe_scale=pe_scale,
-                                                     emo_emb_dim=emo_emb_dim,
-                                                     att_type=att_type
-                                                     )
-        elif unet_type == "diffuser":
-            self.estimator = UNet2DConditionModel(
-                sample_size=(80, 100),
-                in_channels=2,    # Number of channels in the input sample
-                out_channels=1,   #
-                down_block_types=("DownBlock2D", "CrossAttnDownBlock2D"),
-                mid_block_type= "UNetMidBlock2DCrossAttn",
-                up_block_types=("CrossAttnUpBlock2D", "UpBlock2D"),
-                block_out_channels=(32, 64),
-                norm_num_groups=8,  # ?
-                layers_per_block=2,
-                cross_attention_dim=(32, 64),
-                class_embed_type="simple_projection",
-                projection_class_embeddings_input_dim=32,
-                class_embeddings_concat=True,
-            )
+        #if self.data_type == "melstyle" or self.data_type == "psd":
+        if self.att_type == "linear":
+            sample_channel_n = 3
         else:
-            print("input origin or diffuser")
+            sample_channel_n = 1
+
+        self.estimator = GradLogPEstimator2dCond(dim,
+                                                 sample_channel_n=sample_channel_n,
+                                                 n_spks=n_spks,
+                                                 spk_emb_dim=spk_emb_dim,
+                                                 pe_scale=pe_scale,
+                                                 emo_emb_dim=emo_emb_dim,
+                                                 att_type=att_type,
+                                                 )
 
     def forward_diffusion(self, x0, mask, mu, t):
         time = t.unsqueeze(-1).unsqueeze(-1)
@@ -104,9 +92,11 @@ class CondDiffusion(BaseModule):
                           n_timesteps,
                           stoc=True,
                           spk=None,
-                          emo=None,
                           psd=None,
+                          melstyle=None,
                           emo_label=None,
+                          align_len=None,
+                          align_mtx=None
                           ):
         """
         Denoising process, given z, mu and conditioned on emolabel, psd, spk
@@ -125,7 +115,6 @@ class CondDiffusion(BaseModule):
         Returns:
 
         """
-        interpolate_rate = 0.5
         h = 1.0 / n_timesteps
         xt = z * mask
 
@@ -135,32 +124,84 @@ class CondDiffusion(BaseModule):
             time = t.unsqueeze(-1).unsqueeze(-1)
             noise_t = get_noise(time, self.beta_min, self.beta_max,
                                 cumulative=False)
-            if self.unet_type == "origin":
-                score_emo = self.estimator(
-                    x=xt,
-                    mask=mask,
-                    mu=mu,
-                    t=t,
-                    spk=spk,
-                    txt=None,
-                    #emo=emo,
-                    emo_label=emo_label,
-                    psd=psd
-                )
-            else:
-                hidden_stats1 = self.text_encoder(xt, mask)
-                score_emo = self.estimator(
-                    sample=xt,
-                    timestep=t,
-                    encoder_hidden_states=hidden_stats1,
-                    class_labels=emo_label,
-                    cross_attention_kwargs=None
-                )
+            score_emo = self.estimator(
+                x=xt,
+                mask=mask,
+                mu=mu,
+                t=t,
+                spk=spk,
+                psd=psd,
+                melstyle=melstyle,
+                emo_label=emo_label,
+                align_len=align_len,
+                align_mtx=align_mtx
+            )
             dxt_det = 0.5 * (mu - xt) - score_emo
 
             # adds stochastic term
             if stoc:
-                ## add stochastics
+                dxt_det = dxt_det * noise_t * h
+                dxt_stoc = torch.randn(z.shape, dtype=z.dtype, device=z.device,
+                                       requires_grad=False)
+                dxt_stoc = dxt_stoc * torch.sqrt(noise_t * h)
+                dxt = dxt_det + dxt_stoc
+            else:
+                dxt = 0.5 * (mu - xt - score_emo)
+                dxt = dxt * noise_t * h
+            xt = (xt - dxt) * mask
+        return xt
+
+    @torch.no_grad()
+    def reverse_diffusion_interp_mod(
+            self,
+            z,
+            mask,
+            mu,
+            n_timesteps,
+            stoc=True,
+            spk=None,
+            melstyle1=None,
+            emo_label1=None,
+            melstyle2=None,
+            emo_label2=None,
+            align_len=None,
+            align_mtx=None
+    ):
+        h = 1.0 / n_timesteps
+        xt = z * mask
+
+        for i in range(n_timesteps):
+            t = (1.0 - (i + 0.5) * h) * torch.ones(z.shape[0], dtype=z.dtype,
+                                                   device=z.device)
+            time = t.unsqueeze(-1).unsqueeze(-1)
+            noise_t = get_noise(time, self.beta_min, self.beta_max,
+                                cumulative=False)
+
+            # interpolate
+            u = 0.5
+            emo_label = emo_label1 * u + emo_label2 * (1 - u)
+
+            if melstyle1.shape[1] > melstyle2.shape[1]:
+                melstyle1 = melstyle1[:, :melstyle2.shape[1], :]
+            else:
+                melstyle2 = melstyle1[:, :melstyle1.shape[1], :]
+            melstyle = melstyle1 * u + melstyle2 * (1 - u)
+
+            score_emo = self.estimator(
+                x=xt,
+                mask=mask,
+                mu=mu,
+                t=t,
+                spk=spk,
+                melstyle=melstyle,
+                emo_label=emo_label,
+                align_len=align_len,
+                align_mtx=align_mtx
+            )
+            dxt_det = 0.5 * (mu - xt) - score_emo
+
+            # adds stochastic term
+            if stoc:
                 dxt_det = dxt_det * noise_t * h
                 dxt_stoc = torch.randn(z.shape, dtype=z.dtype, device=z.device,
                                        requires_grad=False)
@@ -206,27 +247,16 @@ class CondDiffusion(BaseModule):
             else:
                 hidden_stats2 = None
 
-            if self.unet_type == "origin":
-                score_emo = self.estimator(xt, mask, mu, t, spk, hidden_stats1)
-                # for interpolation
-                if hidden_stats2 is not None:
-                    score_emo2 = self.estimator(xt, mask, mu, t, spk, hidden_stats2)
-                    score_emo = score_emo * interpolate_rate + score_emo2 * (1 - interpolate_rate)
-            else:
-                score_emo = self.estimator(sample=xt,
-                                           timestep=t,
-                                           encoder_hidden_states=hidden_stats1,
-                                           class_labels=emolabel1,
-                                           cross_attention_kwargs=None
-                                           )
-                if hidden_stats2 is not None:
-                    score_emo2 = self.estimator(sample=xt,
-                                                timestep=t,
-                                                encoder_hidden_states="",
-                                                class_labels=hidden_stats2,
-                                                cross_attention_kwargs=None
-                                                )
-                    score_emo = score_emo * interpolate_rate + score_emo2 * (1 - interpolate_rate)
+            score_emo = self.estimator(xt,
+                                       mask,
+                                       mu,
+                                       t,
+                                       spk,
+                                       hidden_stats1)
+            # for interpolation
+            if hidden_stats2 is not None:
+                score_emo2 = self.estimator(xt, mask, mu, t, spk, hidden_stats2)
+                score_emo = score_emo * interpolate_rate + score_emo2 * (1 - interpolate_rate)
             dxt_det = 0.5 * (mu - xt) - score_emo
 
             # adds stochastic term
@@ -251,9 +281,11 @@ class CondDiffusion(BaseModule):
                 n_timesteps,
                 stoc=False,
                 spk=None,
-                emo=None,
                 psd=None,
-                emo_label=None
+                melstyle=None,
+                emo_label=None,
+                align_len=None,
+                align_mtx=None
                 ):
         return self.reverse_diffusion(z=z,
                                       mask=mask,
@@ -261,39 +293,37 @@ class CondDiffusion(BaseModule):
                                       n_timesteps=n_timesteps,
                                       stoc=stoc,
                                       spk=spk,
-                                      emo=emo,
                                       psd=psd,
-                                      emo_label=emo_label
+                                      melstyle=melstyle,
+                                      emo_label=emo_label,
+                                      align_len=align_len,
+                                      align_mtx=align_mtx
                                       )
 
-    def loss_t(self, x0, mask, mu, t,
+    def loss_t(self,
+               x0,
+               mask,
+               mu,
+               t,
                spk=None,
-               emo=None,
                psd=None,
-               emo_label=None):
+               melstyle=None,
+               emo_label=None,
+               align_len=None
+               ):
         xt, z = self.forward_diffusion(x0, mask, mu, t)
         time = t.unsqueeze(-1).unsqueeze(-1)
         cum_noise = get_noise(time, self.beta_min, self.beta_max, cumulative=True)
-        if self.unet_type == "origin":
-            noise_estimation = self.estimator(xt,
-                                              mask,
-                                              mu,
-                                              t,
-                                              spk,
-                                              emo_label=emo_label,
-                                              psd=psd)
-        else:
-            if emo is not None:
-                hidden_stats = emo
-            else:
-                hidden_stats = torch.concat(psd, dim=1)
-            noise_estimation = self.estimator(sample=xt,
-                                              timestep=t,
-                                              encoder_hidden_states=hidden_stats,
-                                              class_labels=emo_label,
-                                              cross_attention_kwargs=None
-                                              )
-
+        noise_estimation = self.estimator(xt,
+                                          mask,
+                                          mu,
+                                          t,
+                                          spk=spk,
+                                          psd=psd,
+                                          melstyle=melstyle,
+                                          emo_label=emo_label,
+                                          align_len=align_len
+                                          )
         noise_estimation *= torch.sqrt(1.0 - torch.exp(-cum_noise))
         loss = torch.sum((noise_estimation + z) ** 2) / (torch.sum(mask) * self.n_feats)
         return loss, xt
@@ -302,11 +332,13 @@ class CondDiffusion(BaseModule):
                      x0,
                      mask,
                      mu,
-                     spk=None,
                      offset=1e-5,
-                     emo=None,
+                     spk=None,
                      psd=None,
-                     emo_label=None):
+                     melstyle=None,
+                     emo_label=None,
+                     align_len=None,
+                     ):
         t = torch.rand(x0.shape[0], dtype=x0.dtype, device=x0.device,
                        requires_grad=False)
         t = torch.clamp(t, offset, 1.0 - offset)
@@ -315,6 +347,8 @@ class CondDiffusion(BaseModule):
                            mu,
                            t,
                            spk,
-                           emo,
                            psd,
-                           emo_label)
+                           melstyle,
+                           emo_label,
+                           align_len
+                           )

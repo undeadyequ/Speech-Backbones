@@ -20,7 +20,7 @@ decoder:
 
 unet:
   unet_type: "origin"  # origin or diffuser
-  att_type: "cross"   # linear or crossAtt
+  att_type: "linear"   # linear or crossAtt
 
 spk_emb_dim: 64
 emo_emb_dim: 5
