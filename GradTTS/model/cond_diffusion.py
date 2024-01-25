@@ -177,7 +177,7 @@ class CondDiffusion(BaseModule):
             noise_t = get_noise(time, self.beta_min, self.beta_max,
                                 cumulative=False)
 
-            # interpolate
+            # linear interpolate
             u = 0.5
             emo_label = emo_label1 * u + emo_label2 * (1 - u)
 
