@@ -190,18 +190,20 @@ def inference(configs,
     print('Done. Check out `out` folder for samples.')
 
 
-def inference_interp(configs,
-              model_name,
-              chk_pt,
-              syn_txt=None,
-              time_steps=50,
-              spk=None,
-              emo_label1=None,
-              melstyle1=None,
-              emo_label2=None,
-              melstyle2=None,
-              out_dir=None
-              ):
+def inference_interp(
+        configs,
+        model_name,
+        chk_pt,
+        syn_txt=None,
+        time_steps=50,
+        spk=None,
+        emo_label1=None,
+        melstyle1=None,
+        emo_label2=None,
+        melstyle2=None,
+        out_dir=None,
+        interp_type="temp"
+):
 
     # Get model
     print('Initializing Grad-TTS...')
@@ -255,8 +257,8 @@ def inference_interp(configs,
                     melstyle1=melstyle1,
                     emo_label2=emo_label2,
                     melstyle2=melstyle2,
+                    interp_type=interp_type
                 )
-
             t = (dt.datetime.now() - t).total_seconds()
             print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
             audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
@@ -273,24 +275,6 @@ def get_emo_label(emo: str, emo_value=1):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-f', '--file', type=str, required=False,
-                        default="resources/filelists/synthesis1.txt",
-                        help='path to a file with texts to synthesize')
-    parser.add_argument('-c', '--checkpoint',
-                        type=str,
-                        required=False,
-                        default="grad_55.pt",
-                        help='path to a checkpoint of Grad-TTS')
-    parser.add_argument('-t', '--timesteps', type=int, required=False,
-                        default=100, help='number of timesteps of reverse diffusion')
-    parser.add_argument('-s', '--speaker_id', type=int, required=False,
-                        default=15, help='speaker id for multispeaker model')
-    parser.add_argument('-e', '--emo_label', type=str, required=False,
-                        default="Sad")
-
-    args = parser.parse_args()
-
     # constant parameter
     emo_num_dict = {
         "Angry": 0,
@@ -312,19 +296,23 @@ if __name__ == '__main__':
     config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
     melstyle_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/emo_reps"
 
-    # Input value
-    spk_tensor = torch.LongTensor([args.speaker_id]).cuda() if not isinstance(args.speaker_id, type(None)) else None
-    ## style
-    emo_label = args.emo_label
+
+    ## INPUT
+    ### General
+    checkpoint = "grad_55.pt"
+    chk_pt = logs_dir + checkpoint
+    syn_txt = "resources/filelists/synthesis1.txt"
+    time_steps = 100
+    model_name = "gradtts_cross"
+
+    speaker_id = 15
+    spk_tensor = torch.LongTensor([speaker_id]).cuda() if not isinstance(speaker_id, type(None)) else None
+    ### Style
+    emo_label = "Angry"
     emo_label_tensor = torch.LongTensor(get_emo_label(emo_label)).cuda()
     melstyle_tensor = torch.from_numpy(np.load(
         melstyle_dir + "/" + emo_melstyle_dict[emo_label])).cuda()
     melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
-
-    chk_pt = logs_dir + args.checkpoint
-    ## content
-    syn_txt = args.file
-    time_steps = args.timesteps
 
     preprocess_config = yaml.load(
         open(config_dir + "/preprocess_gradTTS.yaml", "r"), Loader=yaml.FullLoader
@@ -334,16 +322,28 @@ if __name__ == '__main__':
     train_config = yaml.load(open(
         config_dir + "/train_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
     configs = (preprocess_config, model_config, train_config)
-    model_name = "gradtts_cross"
+    chpt_n = checkpoint.split(".")[0].split("_")[1]
 
-    chpt_n = args.checkpoint.split(".")[0].split("_")[1]
+    # Interpolation input
+    sad1 = "0019_001115.npy"
+    ang1 = "0019_000508.npy"
+    melstyle_sad = torch.from_numpy(np.load(melstyle_dir + "/" + sad1)).unsqueeze(0).transpose(1, 2).cuda()
+    melstyle_ang = torch.from_numpy(np.load(melstyle_dir + "/" + ang1)).unsqueeze(0).transpose(1, 2).cuda()
+
+    emo_label1 = "Sad"
+    emo_label2 = "Angry"
+    emo_label_sad = torch.LongTensor(get_emo_label(emo_label1)).cuda()
+    emo_label_ang = torch.LongTensor(get_emo_label(emo_label2)).cuda()
 
     NO_INTERPOLATION = True
-    INTERPOLATE_INFERENCE = False
+    INTERPOLATE_INFERENCE_SIMP = False
+    INTERPOLATE_INFERENCE_TEMP = False
+    INTERPOLATE_INFERENCE_FREQ = False
+
     # inference without interpolation
     if NO_INTERPOLATION:
         # OUTPUT
-        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{args.speaker_id}_emo{emo_label}"
+        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{speaker_id}_emo{emo_label}_TranposeLD"
         if not os.path.isdir(out_dir):
             Path(out_dir).mkdir(exist_ok=True)
 
@@ -358,21 +358,11 @@ if __name__ == '__main__':
                   out_dir=out_dir
                   )
 
-    if INTERPOLATE_INFERENCE:
-        # INPUT
-        time_steps = 100
-        sad1 = "0019_001115.npy"
-        ang1 = "0019_000508.npy"
-        melstyle_sad = torch.from_numpy(np.load(melstyle_dir + "/" + sad1)).unsqueeze(0).transpose(1, 2).cuda()
-        melstyle_ang = torch.from_numpy(np.load(melstyle_dir + "/" + ang1)).unsqueeze(0).transpose(1, 2).cuda()
-
-        emo_label1 = "Sad"
-        emo_label2 = "Angry"
-        emo_label_sad = torch.LongTensor(get_emo_label(emo_label1)).cuda()
-        emo_label_ang = torch.LongTensor(get_emo_label(emo_label2)).cuda()
-
+    if INTERPOLATE_INFERENCE_SIMP:
+        # input
+        interp_type = "simp"
         # output
-        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{args.speaker_id}_{emo_label1}_{emo_label2}"
+        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_interp{interp_type}_spk{speaker_id}_{emo_label1}_{emo_label2}"
         if not os.path.isdir(out_dir):
             Path(out_dir).mkdir(exist_ok=True)
 
@@ -387,12 +377,12 @@ if __name__ == '__main__':
             melstyle1=melstyle_sad,
             emo_label2=emo_label_ang,
             melstyle2=melstyle_ang,
-            out_dir=out_dir
+            out_dir=out_dir,
+            interp_type=interp_type
         )
 
         # 1. interpolate score
         # inference_emo_interpolation(params, chk_pt, syn_txt, time_steps, spk, emo1, emo2, out_dir)
-
         """
         # between inner-emotion
         # between inner-emotion and different intensity
@@ -404,3 +394,26 @@ if __name__ == '__main__':
 
         # 2. Interpolate z
         """
+
+    if INTERPOLATE_INFERENCE_TEMP:
+        # input
+        interp_type = "temp"
+        # output
+        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_interp{interp_type}_spk{speaker_id}_{emo_label1}_{emo_label2}_v3_maskFirstLayers_timeSplit"
+        if not os.path.isdir(out_dir):
+            Path(out_dir).mkdir(exist_ok=True)
+
+        inference_interp(
+            configs,
+            model_name,
+            chk_pt,
+            syn_txt=syn_txt,
+            time_steps=time_steps,
+            spk=spk_tensor,
+            emo_label1=emo_label_sad,
+            melstyle1=melstyle_sad,
+            emo_label2=emo_label_ang,
+            melstyle2=melstyle_ang,
+            out_dir=out_dir,
+            interp_type=interp_type
+        )

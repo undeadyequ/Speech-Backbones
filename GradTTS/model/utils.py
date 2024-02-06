@@ -10,6 +10,7 @@ def sequence_mask(length, max_length=None):
     return x.unsqueeze(0) < length.unsqueeze(1)
 
 
+
 def fix_len_compatibility(length, num_downsamplings_in_unet=2):
     while True:
         if length % (2**num_downsamplings_in_unet) == 0:

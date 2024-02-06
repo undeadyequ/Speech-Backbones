@@ -43,7 +43,11 @@ class Rezero(BaseModule):
         self.g = torch.nn.Parameter(torch.zeros(1))
 
     def forward(self, x, *args, **kwargs):
-        return self.fn(x, *args, **kwargs) * self.g
+        output = self.fn(x, *args, **kwargs)
+        if type(output) is tuple and len(output) == 2:
+            return output[0] * self.g, output[1]
+        else:
+            return output * self.g
 
 
 class Block(BaseModule):
@@ -100,7 +104,8 @@ class LinearAttention(BaseModule):
         out = torch.einsum('bhde,bhdn->bhen', context, q)
         out = rearrange(out, 'b heads c (h w) -> b (heads c) h w', 
                         heads=self.heads, h=h, w=w)
-        return self.to_out(out)
+        return self.to_out(out), context
+
 
 class MultiAttention2(BaseModule):
     def __init__(self, dim_in_q, dim_in_k, att_dim, heads=4):
@@ -117,7 +122,7 @@ class MultiAttention2(BaseModule):
         self.heads = heads
         self.att_dim = att_dim
 
-    def forward(self, input_Q, key=None, value=None, attn_mask=None):
+    def forward(self, input_Q, key=None, value=None, attn_mask=None, mask_value=0):
         """
 
         Args:
@@ -128,15 +133,15 @@ class MultiAttention2(BaseModule):
         Returns:
             out:  (b, c, d_q, l_q)
         """
-
         b, c, d_q, l_q = input_Q.shape
         d_k, l_k = key.shape[1], key.shape[2]
+        #input_Q = input_Q.view(b, c, l_q, d_q)  # <- (l_q, d_q) or (d_q, l_q)
 
         residual = input_Q.view(b, c, d_q * l_q).transpose(1, 2)  # (b, d_q * l_q, c)  ?? transpose works same as view ??
         Q = (
-            self.W_Q(input_Q).view(b, self.heads, -1, d_q, l_q)
+            self.W_Q(input_Q).view(b, self.heads, -1, l_q, d_q)  # <- (l_q, d_q) or (d_q, l_q)
         )  # IN: (b, c, d_q, l_q) -> (b, d_m * h, d_q, l_q) -> (b, h, d_m, d_q, l_q) # its good to seperate?
-        Q = Q.view(b, self.heads, self.att_dim,  d_q * l_q).transpose(2, 3) # -> (b, h, l_q * d_q, d_m)  <- att_dim = h * d_m
+        Q = Q.view(b, self.heads, self.att_dim,  d_q * l_q).transpose(2, 3) # -> (b, h, d_q * l_q, d_m)  <- att_dim = h * d_m
 
         K = (
             self.W_K(key.transpose(1, 2)).view(b, self.heads, l_k, -1)
@@ -144,8 +149,7 @@ class MultiAttention2(BaseModule):
         V = (
             self.W_V(value.transpose(1, 2)).view(b, self.heads, l_k, -1)
         )  # OUT: (b, h, l_k, d_m)
-        context, attn = ScaledDotProductionAttention()(Q, K, V, attn_mask)   # (b, h, d_q * l_q, d_m)
-        #context = context.view(b, self.heads, d_q, l_q, -1)
+        context, attn = ScaledDotProductionAttention()(Q, K, V, attn_mask, mask_value)   # (b, h, d_q * l_q, d_m)  attn: (b, h, l_q * d_q, l_k)
         context = torch.cat(
             [context[:, i, :, :] for i in range(context.size(1))], dim=-1)   # (b, d_q * l_q, d_m * h)
 
@@ -157,7 +161,7 @@ class MultiAttention2(BaseModule):
         else:
             output = torch.nn.LayerNorm(c).cuda()(output).transpose(1, 2)  # (b, c, d_q * l_q)
             output = output.view(b, c, d_q, l_q)
-        return output
+        return output, attn
 
 
 class ScaledDotProductionAttention(BaseModule):
@@ -167,16 +171,16 @@ class ScaledDotProductionAttention(BaseModule):
             self.dropout = torch.nn.Dropout(p=dropout)
         else:
             self.dropout = dropout
-        self.softmax = torch.nn.Softmax(dim=2)
+        self.softmax = torch.nn.Softmax(dim=2)   # torch.nn.Softmax(dim=2) -> torch.nn.Softmax(dim=-1)
         self.scale = scale
 
-    def forward(self, q, k, v, att_mask=None):
+    def forward(self, q, k, v, att_mask=None, mask_value=0):
         """
         Args:
             q: (b, h, q, d)
             k: (b, h, k, d)
             v: (b, h, k, d)
-            att_mask:
+            att_mask: (b, h, q, k)
         Returns:
             out: (b, h, q, d)
             att: (b, h, q, k)
@@ -186,12 +190,13 @@ class ScaledDotProductionAttention(BaseModule):
             dimension = torch.as_tensor(k.size(-1), dtype=attn.dtype, device=attn.device).sqrt()
             attn = attn / dimension
         if att_mask is not None:
-            attn = attn.masked_fill(att_mask, -1e9)
+            attn = attn.masked_fill(att_mask, mask_value)
         attn = self.softmax(attn)
         if self.dropout is not None:
             attn = self.dropout(attn)
         output = torch.einsum('bhqk,bhkd->bhqd', attn, v)
         return output, attn
+
 
 class MultiAttention(BaseModule):
     def __init__(self, dim_in, att_dim=80):
@@ -213,14 +218,18 @@ class MultiAttention(BaseModule):
         x_res = x[0].unsqueeze(1).repeat(1, self.dim_in, 1, 1)
         return x_res.transpose(2, 3)
 
+
 class Residual(BaseModule):
     def __init__(self, fn):
         super(Residual, self).__init__()
         self.fn = fn
 
     def forward(self, x, *args, **kwargs):
-        output = self.fn(x, *args, **kwargs) + x
-        return output
+        output = self.fn(x, *args, **kwargs)
+        if type(output) is tuple and len(output) == 2:
+            return output[0] + x, output[1]
+        else:
+            return output + x
 
 
 class SinusoidalPosEmb(BaseModule):

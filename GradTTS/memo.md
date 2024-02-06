@@ -1,6 +1,3 @@
-# Question
-1: Rezero is Not usefull in Multihead??
-
 
 
 # interpolation test
@@ -17,12 +14,7 @@ emo: (4, 768)
 ## Architect of x_T, z_T
 - x_T = concat(z, mu) -> (b, 2, dim, l)
 - z_T = concat(spk, melstyle, emolabel) -> (b, dim * 3, l)
-
-## LinearAttention
-- L * 80 -> att_dim
-
-## CrossAttention
-- 
+ 
 
 ## Unet process
 
@@ -310,9 +302,3 @@ Traceback (most recent call last):
   File "/home/rosen/anaconda3/envs/gradtts/lib/python3.8/site-packages/torch/utils/data/dataloader.py", line 1176, in _try_get_data
     raise RuntimeError('DataLoader worker (pid(s) {}) exited unexpectedly'.format(pids_str)) from e
 RuntimeError: DataLoader worker (pid(s) 6303) exited unexpectedly
-
-
-
-
-
-

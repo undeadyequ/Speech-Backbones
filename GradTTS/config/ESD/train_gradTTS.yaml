@@ -1,6 +1,6 @@
 path:
   ckpt_path: "./output/ckpt/ESD"
-  log_dir: "./logs/gradtts_crossSelf_v2/" # for training
+  log_dir: "./logs/gradtts_crossSelf_v3/" # for training
   result_path: "./output/result/ESD"
 test_size: 4
 n_epochs: 10000
@@ -8,7 +8,7 @@ batch_size: 48
 learning_rate: 1e-4
 seed: 37
 save_every: 1
-resume_epoch: 1
+resume_epoch: 12
 
 # ---------------not used-------------
 optimizer:

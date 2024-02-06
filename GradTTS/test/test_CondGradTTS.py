@@ -82,7 +82,8 @@ def test_CondGradTTS():
     """
 
     TEST_REVERSE = False
-    TEST_COMPUTE_LOSS = True
+    TEST_REVERSE_INTERP = True
+    TEST_COMPUTE_LOSS = False
 
     # test condition
     att_type = "cross"  # "linear"
@@ -130,6 +131,40 @@ def test_CondGradTTS():
             output[0].size(),
             output[1].size(),
             output[2].size())
+        )
+    if TEST_REVERSE_INTERP:
+        emolabel1 = [[0] * emo_emb_dim]
+        emolabel1[0][0] = 1
+        emolabel2 = [[0] * emo_emb_dim]
+        emolabel2[0][1] = 1
+        batch = 1
+        mel_max_len = 2
+
+
+        inputs_value = {
+            "x": torch.randint(0, text_n, (batch, text_max_len)),
+            "x_lengths": torch.randint(0, text_max_len, (batch,)),
+            "n_timesteps": n_timesteps,
+            "temperature": temperature,
+            "stoc": stoc,
+            "length_scale": length_scale,
+            "spk": torch.randint(0, speaker_n, (batch,)),
+            "melstyle1": torch.randn(batch, style_emb_dim, mel_max_len),
+            "melstyle2": torch.randn(batch, style_emb_dim, mel_max_len),
+            "emo_label1": torch.tensor(emolabel1, dtype=torch.int64),
+            "emo_label2": torch.tensor(emolabel2, dtype=torch.int64),
+            "interp_type": "temp"
+        }
+
+        y_enc, y_dec, attn = model.reverse_diffusion_interp(
+            **inputs_value
+        )
+
+        # encoder_outputs, decoder_outputs, attn
+        print("print encoder_outputs: {}, decoder_outputs: {}, attn: {}".format(
+            y_enc.size(),
+            y_dec.size(),
+            attn.size())
         )
 
     if TEST_COMPUTE_LOSS:

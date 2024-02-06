@@ -165,8 +165,32 @@ class CondDiffusion(BaseModule):
             melstyle2=None,
             emo_label2=None,
             align_len=None,
-            align_mtx=None
+            align_mtx=None,
+            interp_type="simple",
     ):
+        """
+
+        Args:
+            z:
+            mask:
+            mu:
+            n_timesteps:
+            stoc:
+            spk:
+            melstyle1:
+            emo_label1:
+            melstyle2:
+            emo_label2:
+            align_len:
+            align_mtx:
+            interp_type:
+                "simp":
+                "temp":
+                "freq"
+        Returns:
+
+        """
+
         h = 1.0 / n_timesteps
         xt = z * mask
 
@@ -178,26 +202,57 @@ class CondDiffusion(BaseModule):
                                 cumulative=False)
 
             # linear interpolate
-            u = 0.5
-            emo_label = emo_label1 * u + emo_label2 * (1 - u)
+            if interp_type == "simp":
+                u = 0.5
+                emo_label = emo_label1 * u + emo_label2 * (1 - u)
 
-            if melstyle1.shape[1] > melstyle2.shape[1]:
-                melstyle1 = melstyle1[:, :melstyle2.shape[1], :]
-            else:
-                melstyle2 = melstyle1[:, :melstyle1.shape[1], :]
-            melstyle = melstyle1 * u + melstyle2 * (1 - u)
+                if melstyle1.shape[1] > melstyle2.shape[1]:
+                    melstyle1 = melstyle1[:, :melstyle2.shape[1], :]
+                else:
+                    melstyle2 = melstyle1[:, :melstyle1.shape[1], :]
+                melstyle = melstyle1 * u + melstyle2 * (1 - u)
 
-            score_emo = self.estimator(
-                x=xt,
-                mask=mask,
-                mu=mu,
-                t=t,
-                spk=spk,
-                melstyle=melstyle,
-                emo_label=emo_label,
-                align_len=align_len,
-                align_mtx=align_mtx
-            )
+                score_emo = self.estimator(
+                    x=xt,
+                    mask=mask,
+                    mu=mu,
+                    t=t,
+                    spk=spk,
+                    melstyle=melstyle,
+                    emo_label=emo_label,
+                    align_len=align_len,
+                    align_mtx=align_mtx
+                )
+            elif interp_type == "temp":
+                if i < int(n_timesteps / 3):
+                    score_emo = self.estimator.forward_temporal_interp(
+                        x=xt,
+                        mask=mask,
+                        mu=mu,
+                        t=t,
+                        spk=spk,
+                        melstyle1=melstyle1,
+                        emo_label1=emo_label1,
+                        melstyle2=melstyle2,
+                        emo_label2=emo_label2,
+                        align_len=align_len,
+                        align_mtx=align_mtx
+                    )
+                else:
+                    score_emo = self.estimator(
+                        x=xt,
+                        mask=mask,
+                        mu=mu,
+                        t=t,
+                        spk=spk,
+                        melstyle=melstyle1,
+                        emo_label=emo_label1,
+                        align_len=align_len,
+                        align_mtx=align_mtx
+                    )
+            elif interp_type == "freq":
+                pass
+
             dxt_det = 0.5 * (mu - xt) - score_emo
 
             # adds stochastic term

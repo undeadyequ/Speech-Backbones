@@ -161,6 +161,7 @@ class CondGradTTS(BaseModule):
                                  melstyle1=None,
                                  emo_label2=None,
                                  melstyle2=None,
+                                 interp_type="simple"
                                  ):
         x, x_lengths = self.relocate_input([x, x_lengths])
 
@@ -208,7 +209,8 @@ class CondGradTTS(BaseModule):
             melstyle2=melstyle2,
             emo_label2=emo_label2,
             align_len=mu_y.shape[-1],
-            align_mtx=attn
+            align_mtx=attn,
+            interp_type=interp_type
         )
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
