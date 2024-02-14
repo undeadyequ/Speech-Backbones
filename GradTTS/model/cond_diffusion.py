@@ -252,6 +252,8 @@ class CondDiffusion(BaseModule):
                     )
             elif interp_type == "freq":
                 pass
+            else:
+                print("Wrong inter_type")
 
             dxt_det = 0.5 * (mu - xt) - score_emo
 
