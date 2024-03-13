@@ -1,4 +1,45 @@
+# Problem
+## Voice can not be synthesized by temp interpolation
+  - self.to_out(context) has bias which is removed/not removed in inference and training stage.  <- context (b, d*l, s) is half masked on d*l dim in inference. -> modify it later
+  - two residual  -> modify it later
+  - rezero == -0.003?  -> why it is needed?
+  - Layernorm didn't effect masked value (Still zero before/after norm)
 
+# Implement
+## Temp interpolation -> OK
+## Freq interpolation -> On doing
+
+```c
+# sampleGuidence
+loop: t < T
+  if t <- tal:
+    loop: i < epoch:
+      x_guid <- x
+      attn_score <- estimator(x_guided)
+      minimize loss(attn_score)
+  else:
+    att_score <- estimator(x)
+```
+
+- sampleGuidence
+  - hyper
+    - epoch
+    - tal
+  - pitchMask generation
+    - get pitch <- from input
+    - get bins from freq of pitch?
+      - mels -> freq_list -> bins  OK
+      - mel pitch alignment?
+        - check t in pitch extraction?
+- Improvement
+  - epoch for training x_guided in SasmpleGuidence?
+  - melstyle is 1 length!
+
+![layernorm.png](img%2Flayernorm.png)
+
+# other
+- pesudo algorithm test
+[https://tex.stackexchange.com/questions/163768/write-pseudo-code-in-latex](pesudo algorithm)
 
 # interpolation test
 python inference.py -f resources/filelists/synthesis.txt -c checkpts/grad-tts-libri-tts.pt -t 100 -s 12 -s2 10
@@ -38,180 +79,6 @@ AssertionError: was expecting embedding dimension of 80, but got 40
 
 ## Estimator list
 - Estimator List:
-
-```python
-ModuleList(
-  (0): ModuleList(
-    (0): ResnetBlock(
-      (mlp): Sequential(
-        (0): Mish()
-        (1): Linear(in_features=64, out_features=64, bias=True)
-      )
-      (block1): Block(
-        (block): Sequential(
-          (0): Conv2d(1, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 64, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (block2): Block(
-        (block): Sequential(
-          (0): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 64, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (res_conv): Conv2d(1, 64, kernel_size=(1, 1), stride=(1, 1))
-    )
-    (1): ResnetBlock(
-      (mlp): Sequential(
-        (0): Mish()
-        (1): Linear(in_features=64, out_features=64, bias=True)
-      )
-      (block1): Block(
-        (block): Sequential(
-          (0): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 64, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (block2): Block(
-        (block): Sequential(
-          (0): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 64, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (res_conv): Identity()
-    )
-    (2): MultiAttention(
-      (block1): Sequential(
-        (0): Conv2d(64, 1, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-        (1): Mish()
-      )
-      (prj): Linear(in_features=240, out_features=80, bias=True)
-      (mlthead): MultiheadAttention(
-        (out_proj): NonDynamicallyQuantizableLinear(in_features=80, out_features=80, bias=True)
-      )
-    )
-    (3): Downsample(
-      (conv): Conv2d(64, 64, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-    )
-  )
-  (1): ModuleList(
-    (0): ResnetBlock(
-      (mlp): Sequential(
-        (0): Mish()
-        (1): Linear(in_features=64, out_features=128, bias=True)
-      )
-      (block1): Block(
-        (block): Sequential(
-          (0): Conv2d(64, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 128, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (block2): Block(
-        (block): Sequential(
-          (0): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 128, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (res_conv): Conv2d(64, 128, kernel_size=(1, 1), stride=(1, 1))
-    )
-    (1): ResnetBlock(
-      (mlp): Sequential(
-        (0): Mish()
-        (1): Linear(in_features=64, out_features=128, bias=True)
-      )
-      (block1): Block(
-        (block): Sequential(
-          (0): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 128, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (block2): Block(
-        (block): Sequential(
-          (0): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 128, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (res_conv): Identity()
-    )
-    (2): MultiAttention(
-      (block1): Sequential(
-        (0): Conv2d(128, 1, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-        (1): Mish()
-      )
-      (prj): Linear(in_features=240, out_features=80, bias=True)
-      (mlthead): MultiheadAttention(
-        (out_proj): NonDynamicallyQuantizableLinear(in_features=80, out_features=80, bias=True)
-      )
-    )
-    (3): Downsample(
-      (conv): Conv2d(128, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
-    )
-  )
-  (2): ModuleList(
-    (0): ResnetBlock(
-      (mlp): Sequential(
-        (0): Mish()
-        (1): Linear(in_features=64, out_features=256, bias=True)
-      )
-      (block1): Block(
-        (block): Sequential(
-          (0): Conv2d(128, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 256, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (block2): Block(
-        (block): Sequential(
-          (0): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 256, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (res_conv): Conv2d(128, 256, kernel_size=(1, 1), stride=(1, 1))
-    )
-    (1): ResnetBlock(
-      (mlp): Sequential(
-        (0): Mish()
-        (1): Linear(in_features=64, out_features=256, bias=True)
-      )
-      (block1): Block(
-        (block): Sequential(
-          (0): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 256, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (block2): Block(
-        (block): Sequential(
-          (0): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-          (1): GroupNorm(8, 256, eps=1e-05, affine=True)
-          (2): Mish()
-        )
-      )
-      (res_conv): Identity()
-    )
-    (2): MultiAttention(
-      (block1): Sequential(
-        (0): Conv2d(256, 1, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-        (1): Mish()
-      )
-      (prj): Linear(in_features=240, out_features=80, bias=True)
-      (mlthead): MultiheadAttention(
-        (out_proj): NonDynamicallyQuantizableLinear(in_features=80, out_features=80, bias=True)
-      )
-    )
-    (3): Identity()
-  )
-)```
-
 
 
 

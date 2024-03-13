@@ -27,8 +27,8 @@ class CondGradTTS(BaseModule):
     def __init__(self, n_vocab, n_spks, spk_emb_dim, emo_emb_dim,
                  n_enc_channels, filter_channels, filter_channels_dp,
                  n_heads, n_enc_layers, enc_kernel, enc_dropout, window_size,
-                 n_feats, dec_dim, beta_min, beta_max, pe_scale, unet_type,
-                 att_type,
+                 n_feats, dec_dim, sample_channel_n, beta_min, beta_max, pe_scale, unet_type,
+                 att_type, att_dim, heads, p_uncond,
                  psd_n=3,
                  melstyle_n=768):
         super(CondGradTTS, self).__init__()
@@ -63,9 +63,13 @@ class CondGradTTS(BaseModule):
         self.encoder = TextEncoder(n_vocab, n_feats, n_enc_channels, 
                                    filter_channels, filter_channels_dp, n_heads, 
                                    n_enc_layers, enc_kernel, enc_dropout, window_size)
-        self.decoder = CondDiffusion(n_feats, dec_dim, n_spks,
+        self.decoder = CondDiffusion(n_feats, dec_dim,
+                                     sample_channel_n,
+                                     n_spks,
                                      spk_emb_dim, emo_emb_dim,
-                                     beta_min, beta_max, pe_scale, unet_type, att_type)
+                                     beta_min, beta_max, pe_scale, unet_type,
+                                     att_type,
+                                     att_dim, heads, p_uncond)
         self.melstyle_mlp = torch.nn.Sequential(torch.nn.Linear(melstyle_n, melstyle_n), Mish(),
                                            torch.nn.Linear(melstyle_n, n_feats))
 
@@ -81,6 +85,7 @@ class CondGradTTS(BaseModule):
                 psd=None,
                 emo_label=None,
                 melstyle=None,
+                guidence_strength=3.0
                 ):
         """
         Generates mel-spectrogram from text. Returns:
@@ -143,7 +148,8 @@ class CondGradTTS(BaseModule):
                                        melstyle=melstyle,
                                        emo_label=emo_label,
                                        align_len=mu_y.shape[-1],
-                                       align_mtx=attn
+                                       align_mtx=attn,
+                                       guidence_strength=guidence_strength
                                        )
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
@@ -159,9 +165,15 @@ class CondGradTTS(BaseModule):
                                  length_scale=1.0,
                                  emo_label1=None,
                                  melstyle1=None,
+                                 pitch1=None,
                                  emo_label2=None,
                                  melstyle2=None,
-                                 interp_type="simple"
+                                 pitch2=None,
+                                 interp_type="simple",
+                                 mask_time_step=None,
+                                 mask_all_layer=True,
+                                 temp_mask_value=0,
+                                 guidence_strength=3.0
                                  ):
         x, x_lengths = self.relocate_input([x, x_lengths])
 
@@ -206,15 +218,20 @@ class CondGradTTS(BaseModule):
             spk=spk,
             melstyle1=melstyle1,
             emo_label1=emo_label1,
+            pitch1=pitch1,
             melstyle2=melstyle2,
             emo_label2=emo_label2,
-            align_len=mu_y.shape[-1],
+            pitch2=pitch2,
+            align_len=melstyle1.shape[1],  # ?? mu_y.shape[-1] ??
             align_mtx=attn,
-            interp_type=interp_type
+            interp_type=interp_type,
+            mask_time_step=mask_time_step,
+            mask_all_layer=mask_all_layer,
+            temp_mask_value=temp_mask_value,
+            guidence_strength=guidence_strength
         )
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
-
 
     def compute_loss(self,
                      x,
@@ -361,6 +378,7 @@ class CondGradTTS(BaseModule):
         
         return dur_loss, prior_loss, diff_loss
 
+    """
     def align_combine_cond(
             self,
             psd,
@@ -393,7 +411,7 @@ class CondGradTTS(BaseModule):
             enc_hid_cond = torch.concat([psd_aligned, spk_align], dim=1)  # # (b, all_dim, phnm_len)
         enc_hids_mask = align_target_mask  # (b, )
         return enc_hid_cond, enc_hids_mask
-
+    """
 
 def get_cut_range_x(attn, cut_lower, cut_upper):
     cut_lower_x = (attn[:, cut_lower] == 1).nonzero(as_tuple=False)

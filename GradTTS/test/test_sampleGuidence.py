@@ -1,14 +1,15 @@
 # if run under test folder
 import sys
+
+import numpy as np
+
 sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
 
 import torch
 import yaml
-from GradTTS.model.cond_tts import CondGradTTS
-from GradTTS.model.cond_diffusion import CondDiffusion
-from GradTTS.text.symbols import symbols
+from GradTTS.model.sampleGuidence import SampleGuidence, create_pitch_bin_mask
 
-def test_CondGradTTS():
+def test_sampleGuidence():
     config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
     train_config = config_dir + "/train_gradTTS.yaml"
     preprocess_config = config_dir + "/preprocess_gradTTS.yaml"
@@ -90,7 +91,7 @@ def test_CondGradTTS():
     TEST_COMPUTE_LOSS = True
 
     # test condition
-    model = CondGradTTS(nsymbols,
+    model = SampleGuidence(nsymbols,
                         n_spks,
                         spk_emb_dim,
                         emo_emb_dim,
@@ -189,5 +190,18 @@ def test_CondGradTTS():
             dur_loss, prior_loss, diff_loss = model.compute_loss(**inputs_value_train)
             print(dur_loss, prior_loss, diff_loss)
 
+def test_create_pitch_bin_mask(
+):
+    inputs_value = {
+        "pitch_contour": np.array([100, 120, 150, 250]),
+        "mel_spectrogram": np.random.random([20, 10]),
+        "n_mels": 80,
+        "fmin": 0.0,
+        "fmax": 8000.0
+    }
+    pitch_bin_mask = create_pitch_bin_mask(**inputs_value)
+    print(pitch_bin_mask)
+
 if __name__ == '__main__':
-    test_CondGradTTS()
+    #test_sampleGuidence()
+    test_create_pitch_bin_mask()

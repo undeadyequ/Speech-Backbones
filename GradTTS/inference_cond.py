@@ -75,10 +75,14 @@ def get_model(configs, model="gradtts_lm"):
     stoc = model_config["decoder"]["stoc"]
     temperature = float(model_config["decoder"]["temperature"])
     n_timesteps = int(model_config["decoder"]["n_timesteps"])
+    sample_channel_n = int(model_config["decoder"]["sample_channel_n"])
 
     ### unet
     unet_type = model_config["unet"]["unet_type"]
     att_type = model_config["unet"]["att_type"]
+    att_dim = model_config["unet"]["att_dim"]
+    heads = model_config["unet"]["heads"]
+    p_uncond = model_config["unet"]["p_uncond"]
 
     if model == "gradtts_lm":
         return CondGradTTSLDM(
@@ -115,11 +119,15 @@ def get_model(configs, model="gradtts_lm"):
                             window_size,
                             n_feats,
                             dec_dim,
+                            sample_channel_n,
                             beta_min,
                             beta_max,
                             pe_scale,
                             unet_type,
-                            att_type)
+                            att_type,
+                            att_dim,
+                            heads,
+                            p_uncond)
 
 
 def inference(configs,
@@ -130,7 +138,8 @@ def inference(configs,
               spk=None,
               emo_label=None,
               melstyle=None,
-              out_dir=None
+              out_dir=None,
+              guidence_strength=3.0
               ):
 
     # Get model
@@ -182,6 +191,7 @@ def inference(configs,
                                                        spk=spk,
                                                        emo_label=emo_label,
                                                        melstyle=melstyle,
+                                                       guidence_strength=guidence_strength
                                                        )
             t = (dt.datetime.now() - t).total_seconds()
             print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
@@ -199,10 +209,16 @@ def inference_interp(
         spk=None,
         emo_label1=None,
         melstyle1=None,
+        pitch1=None,
         emo_label2=None,
         melstyle2=None,
+        pitch2=None,
         out_dir=None,
-        interp_type="temp"
+        interp_type="temp",
+        mask_time_step=None,
+        mask_all_layer=True,
+        temp_mask_value=0,
+        guidence_strength=3.0
 ):
 
     # Get model
@@ -255,16 +271,21 @@ def inference_interp(
                     spk=spk,
                     emo_label1=emo_label1,
                     melstyle1=melstyle1,
+                    pitch1=pitch1,
                     emo_label2=emo_label2,
                     melstyle2=melstyle2,
-                    interp_type=interp_type
+                    pitch2=pitch2,
+                    interp_type=interp_type,
+                    mask_time_step=mask_time_step,
+                    mask_all_layer=mask_all_layer,
+                    temp_mask_value=temp_mask_value,
+                    guidence_strength=guidence_strength
                 )
             t = (dt.datetime.now() - t).total_seconds()
             print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
             audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
             write(f'{out_dir}/sample_{i}.wav', 22050, audio)
     print('Done. Check out `out` folder for samples.')
-
 
 
 def get_emo_label(emo: str, emo_value=1):
@@ -284,22 +305,42 @@ if __name__ == '__main__':
         "Happy": 4
     }
     emo_melstyle_dict = {
-        "Angry": "0019_000508.npy",
-        "Surprise": "",
-        "Sad": "0019_001115.npy",
-        "Neutral": "",
-        "Happy": ""
+        "Angry": "0015_000415.npy",  # Tom could hardly speak for laughing
+        "Surprise": "0015_001465.npy",
+        "Sad": "0015_001115.npy",   # Tom could hardly speak for laughing
+        "Neutral": "0015_000065.npy",
+        "Happy": "0015_000765.npy"
     }
+    # used for extract pitch (Phoneme average)
+    psd_dict = {
+        "Angry": "0015-pitch-0015_000415.npy",  # Tom could hardly speak for laughing
+        "Surprise": "0015-pitch-0015_001465.npy",
+        "Sad": "0015-pitch-0015_001115.npy",  # Tom could hardly speak for laughing
+        "Neutral": "0015-pitch-0015_000065.npy",
+        "Happy": "0015-pitch-0015_000765.npy"
+    }
+    # used for extract pitch (No phoneme average)
+    wav_dict = {
+        "Angry": "0015_000415.wav",  # Tom could hardly speak for laughing
+        "Surprise": "0015_001465.wav",
+        "Sad": "0015_001115.wav",  # Tom could hardly speak for laughing
+        "Neutral": "0015_000065.npy",
+        "Happy": "0015_000765.npy"
+    }
+
     logs_dir_par = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
-    logs_dir = logs_dir_par + "gradtts_crossSelf_v2/"
+    #logs_dir = logs_dir_par + "gradtts_crossSelf_v2/"
+    logs_dir = logs_dir_par + "gradtts_crossSelf_puncond_n1_neworder_fixmask/"
 
     config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
     melstyle_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/emo_reps"
+    psd_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/pitch"
+    wav_dir = "/home/rosen/Project/FastSpeech2/ESD/16k_wav"
 
 
     ## INPUT
     ### General
-    checkpoint = "grad_55.pt"
+    checkpoint = "grad_54.pt"
     chk_pt = logs_dir + checkpoint
     syn_txt = "resources/filelists/synthesis1.txt"
     time_steps = 100
@@ -313,6 +354,7 @@ if __name__ == '__main__':
     melstyle_tensor = torch.from_numpy(np.load(
         melstyle_dir + "/" + emo_melstyle_dict[emo_label])).cuda()
     melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
+    guidence_strength = 3.0
 
     preprocess_config = yaml.load(
         open(config_dir + "/preprocess_gradTTS.yaml", "r"), Loader=yaml.FullLoader
@@ -335,28 +377,55 @@ if __name__ == '__main__':
     emo_label_sad = torch.LongTensor(get_emo_label(emo_label1)).cuda()
     emo_label_ang = torch.LongTensor(get_emo_label(emo_label2)).cuda()
 
-    NO_INTERPOLATION = True
+    # psd input (N,)
+    """
+    wav_sad = torch.from_numpy(np.load(
+        psd_dir + "/" + psd_dict["Sad"])).cuda()
+    wav_ang = torch.from_numpy(np.load(
+        psd_dir + "/" + psd_dict["Angry"])).cuda()
+    """
+    wav_sad = wav_dir + "/" + wav_dict["Sad"]
+    wav_ang = wav_dir + "/" + wav_dict["Angry"]
+
+    NO_INTERPOLATION = False
     INTERPOLATE_INFERENCE_SIMP = False
-    INTERPOLATE_INFERENCE_TEMP = False
-    INTERPOLATE_INFERENCE_FREQ = False
+    # Temp
+    INTERPOLATE_INFERENCE_TEMP = False  # synthesize
+    INTERPOLATE_INFERENCE_TEMP_EMO_DETECT = False # evaluation emoTempInterp
+
+    # Freq
+    INTERPOLATE_INFERENCE_FREQ = True   # synthesize
+    INTERPOLATE_INFERENCE_FREQ_PSD_MATCH = False  # evaluation emoFreqInterp
 
     # inference without interpolation
     if NO_INTERPOLATION:
-        # OUTPUT
-        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{speaker_id}_emo{emo_label}_TranposeLD"
-        if not os.path.isdir(out_dir):
-            Path(out_dir).mkdir(exist_ok=True)
+        # INPUT
+        emo_labels = ["Angry", "Sad", "Happy"]
+        guidence_strengths = [0.0, 0.5, 1.0, 3.0, 5.0]  # 0: only cond_diff
 
-        inference(configs,
-                  model_name,
-                  chk_pt,
-                  syn_txt=syn_txt,
-                  time_steps=time_steps,
-                  spk=spk_tensor,
-                  emo_label=emo_label_tensor,
-                  melstyle=melstyle_tensor,
-                  out_dir=out_dir
-                  )
+        for emo_label in emo_labels:
+            for guidence_strength in guidence_strengths:
+                emo_label_tensor = torch.LongTensor(get_emo_label(emo_label)).cuda()
+                melstyle_tensor = torch.from_numpy(np.load(
+                    melstyle_dir + "/" + emo_melstyle_dict[emo_label])).cuda()
+                melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
+
+                # OUTPUT
+                out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{speaker_id}_emo{emo_label}_w{guidence_strength}"
+                if not os.path.isdir(out_dir):
+                    Path(out_dir).mkdir(exist_ok=True)
+
+                inference(configs,
+                          model_name,
+                          chk_pt,
+                          syn_txt=syn_txt,
+                          time_steps=time_steps,
+                          spk=spk_tensor,
+                          emo_label=emo_label_tensor,
+                          melstyle=melstyle_tensor,
+                          out_dir=out_dir,
+                          guidence_strength=guidence_strength
+                          )
 
     if INTERPOLATE_INFERENCE_SIMP:
         # input
@@ -378,7 +447,9 @@ if __name__ == '__main__':
             emo_label2=emo_label_ang,
             melstyle2=melstyle_ang,
             out_dir=out_dir,
-            interp_type=interp_type
+            interp_type=interp_type,
+            guidence_strength=guidence_strength
+
         )
 
         # 1. interpolate score
@@ -398,8 +469,18 @@ if __name__ == '__main__':
     if INTERPOLATE_INFERENCE_TEMP:
         # input
         interp_type = "temp"
+        mask_time_step = int(time_steps / 1.0)
+        mask_all_layer = True
+        temp_mask_value = 0
+        guidence_strength = 3.0
+
         # output
-        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_interp{interp_type}_spk{speaker_id}_{emo_label1}_{emo_label2}_v3_maskFirstLayers_timeSplit"
+        if mask_all_layer:
+            mask_range_tag = "maskAllLayers"
+        else:
+            mask_range_tag = "maskFirstLayers"
+        out_dir = (f"{logs_dir}chpt{chpt_n}_time{time_steps}_interp{interp_type}_spk{speaker_id}_{emo_label1}_"
+                   f"{emo_label2}_{mask_range_tag}_timeSplit_{guidence_strength}_test")
         if not os.path.isdir(out_dir):
             Path(out_dir).mkdir(exist_ok=True)
 
@@ -415,5 +496,44 @@ if __name__ == '__main__':
             emo_label2=emo_label_ang,
             melstyle2=melstyle_ang,
             out_dir=out_dir,
-            interp_type=interp_type
+            interp_type=interp_type,
+            mask_time_step=mask_time_step,
+            mask_all_layer=mask_all_layer,
+            temp_mask_value=temp_mask_value,
+            guidence_strength=guidence_strength
         )
+
+    if INTERPOLATE_INFERENCE_FREQ:
+        # input
+        interp_type = "freq"
+        mask_time_step = int(time_steps / 1.0)
+        mask_all_layer = True
+        temp_mask_value = 0
+        guidence_strength = 3.0
+
+        # output
+        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_interp{interp_type}_spk{speaker_id}_{emo_label1}_{emo_label2}_v3_maskFirstLayers_timeSplit"
+        if not os.path.isdir(out_dir):
+            Path(out_dir).mkdir(exist_ok=True)
+
+        inference_interp(
+            configs,
+            model_name,
+            chk_pt,
+            syn_txt=syn_txt,
+            time_steps=time_steps,
+            spk=spk_tensor,
+            emo_label1=emo_label_sad,
+            melstyle1=melstyle_sad,
+            pitch1=wav_sad,
+            emo_label2=emo_label_ang,
+            melstyle2=melstyle_ang,
+            pitch2=wav_ang,
+            out_dir=out_dir,
+            interp_type=interp_type,
+            mask_time_step=mask_time_step,
+            mask_all_layer=mask_all_layer,
+            temp_mask_value=temp_mask_value,
+            guidence_strength=guidence_strength
+        )
+

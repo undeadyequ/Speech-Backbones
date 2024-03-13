@@ -44,8 +44,13 @@ class Rezero(BaseModule):
 
     def forward(self, x, *args, **kwargs):
         output = self.fn(x, *args, **kwargs)
-        if type(output) is tuple and len(output) == 2:
-            return output[0] * self.g, output[1]
+        if type(output) is tuple:
+            if len(output) == 2:
+                return output[0] * self.g, output[1]
+            elif len(output) == 3:
+                return output[0] * self.g, output[1], output[2]
+            else:
+                IOError("Wrong output")
         else:
             return output * self.g
 
@@ -67,7 +72,6 @@ class ResnetBlock(BaseModule):
         super(ResnetBlock, self).__init__()
         self.mlp = torch.nn.Sequential(Mish(), torch.nn.Linear(time_emb_dim, 
                                                                dim_out))
-
         self.block1 = Block(dim, dim_out, groups=groups)
         self.block2 = Block(dim_out, dim_out, groups=groups)
         if dim != dim_out:
@@ -135,13 +139,14 @@ class MultiAttention2(BaseModule):
         """
         b, c, d_q, l_q = input_Q.shape
         d_k, l_k = key.shape[1], key.shape[2]
-        #input_Q = input_Q.view(b, c, l_q, d_q)  # <- (l_q, d_q) or (d_q, l_q)
+        # Change order of l_q and d_q for using mask
+        input_Q = input_Q.view(b, c, l_q, d_q)  # <- (l_q, d_q) or (d_q, l_q) ?? BE CAREFUL the order
 
-        residual = input_Q.view(b, c, d_q * l_q).transpose(1, 2)  # (b, d_q * l_q, c)  ?? transpose works same as view ??
+        residual = input_Q.view(b, c, l_q * d_q).transpose(1, 2)  # (b, d_q * l_q, c)  ?? transpose works same as view ??
         Q = (
             self.W_Q(input_Q).view(b, self.heads, -1, l_q, d_q)  # <- (l_q, d_q) or (d_q, l_q)
         )  # IN: (b, c, d_q, l_q) -> (b, d_m * h, d_q, l_q) -> (b, h, d_m, d_q, l_q) # its good to seperate?
-        Q = Q.view(b, self.heads, self.att_dim,  d_q * l_q).transpose(2, 3) # -> (b, h, d_q * l_q, d_m)  <- att_dim = h * d_m
+        Q = Q.view(b, self.heads, self.att_dim,  l_q * d_q).transpose(2, 3) # -> (b, h, d_q * l_q, d_m)  <- att_dim = h * d_m
 
         K = (
             self.W_K(key.transpose(1, 2)).view(b, self.heads, l_k, -1)
@@ -154,14 +159,24 @@ class MultiAttention2(BaseModule):
             [context[:, i, :, :] for i in range(context.size(1))], dim=-1)   # (b, d_q * l_q, d_m * h)
 
         output = self.to_out(context)    # -> (b, d_q * l_q, c)
-        output = output + residual       # -> (b, d_q * l_q, c)
+        output = output + residual       # -> (b, d_q * l_q, c)  # There are 2 residual
+
+        if attn_mask is not None:        # Mask on output+1st residual
+            attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1)   # return this for mask on 2nd residual
+            output = output.masked_fill(attn_mask_nohead, mask_value)
+        else:
+            attn_mask_nohead = None
         if output.get_device() == -1:
             output = torch.nn.LayerNorm(c)(output).transpose(1, 2)      # (b, c, d_q * l_q)
-            output = output.view(b, c, d_q, l_q)                        # (b, c, d_q, l_q)
+            output = output.view(b, c, l_q, d_q).transpose(2, 3)        # (b, c, d_q, l_q)
         else:
             output = torch.nn.LayerNorm(c).cuda()(output).transpose(1, 2)  # (b, c, d_q * l_q)
-            output = output.view(b, c, d_q, l_q)
-        return output, attn
+            output = output.view(b, c, l_q, d_q).transpose(2, 3)
+
+        if attn_mask_nohead is not None:
+            return output, attn, attn_mask_nohead
+        else:
+            return output, attn
 
 
 class ScaledDotProductionAttention(BaseModule):
@@ -171,7 +186,7 @@ class ScaledDotProductionAttention(BaseModule):
             self.dropout = torch.nn.Dropout(p=dropout)
         else:
             self.dropout = dropout
-        self.softmax = torch.nn.Softmax(dim=2)   # torch.nn.Softmax(dim=2) -> torch.nn.Softmax(dim=-1)
+        self.softmax = torch.nn.Softmax(dim=-1)   #?? torch.nn.Softmax(dim=2) -> torch.nn.Softmax(dim=-1)
         self.scale = scale
 
     def forward(self, q, k, v, att_mask=None, mask_value=0):
@@ -182,16 +197,16 @@ class ScaledDotProductionAttention(BaseModule):
             v: (b, h, k, d)
             att_mask: (b, h, q, k)
         Returns:
-            out: (b, h, q, d)
-            att: (b, h, q, k)
+            output: (b, h, q, d)
+            attn: (b, h, q, k)
         """
         attn = torch.einsum('bhqd,bhkd->bhqk', q, k)
         if self.scale:
             dimension = torch.as_tensor(k.size(-1), dtype=attn.dtype, device=attn.device).sqrt()
             attn = attn / dimension
-        if att_mask is not None:
-            attn = attn.masked_fill(att_mask, mask_value)
         attn = self.softmax(attn)
+        if att_mask is not None:
+            attn = attn.masked_fill(att_mask, mask_value)  # Do mask after softmax
         if self.dropout is not None:
             attn = self.dropout(attn)
         output = torch.einsum('bhqk,bhkd->bhqd', attn, v)
@@ -223,15 +238,20 @@ class Residual(BaseModule):
     def __init__(self, fn):
         super(Residual, self).__init__()
         self.fn = fn
-
+        
     def forward(self, x, *args, **kwargs):
         output = self.fn(x, *args, **kwargs)
-        if type(output) is tuple and len(output) == 2:
+        if type(output) is tuple and len(output) >= 2:
+            if len(output) == 3:
+                attn_mask = output[2].squeeze(2)
+                b, c, m, l = output[0].shape
+                attn_mask = attn_mask.view(b, -1, l, m).transpose(2, 3)
+                x = x.masked_fill(attn_mask, 0)
             return output[0] + x, output[1]
         else:
             return output + x
 
-
+        
 class SinusoidalPosEmb(BaseModule):
     def __init__(self, dim):
         super(SinusoidalPosEmb, self).__init__()

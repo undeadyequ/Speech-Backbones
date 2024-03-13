@@ -10,6 +10,7 @@ encoder:
   length_scale: 1.0 # speech pace
 
 decoder:
+  sample_channel_n: 2  # LinearAttn: 3, CrossAttn: 1, CrossAttn_Classifier_free: 2
   dec_dim: 64
   beta_min: 0.05
   beta_max: 20.0
@@ -21,6 +22,10 @@ decoder:
 unet:
   unet_type: "origin"  # origin or diffuser
   att_type: "cross"   # linear or crossAtt
+  att_dim: 128
+  heads: 4
+  p_uncond: 0.3
+  guidence_strength: 3
 
 spk_emb_dim: 64
 emo_emb_dim: 5

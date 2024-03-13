@@ -47,7 +47,16 @@ class GradTTS(BaseModule):
         self.decoder = Diffusion(n_feats, dec_dim, n_spks, spk_emb_dim, beta_min, beta_max, pe_scale)
 
     @torch.no_grad()
-    def forward(self, x, x_lengths, n_timesteps, temperature=1.0, stoc=False, spk=None, spk2=None, length_scale=1.0):
+    def forward(self,
+                x,
+                x_lengths,
+                n_timesteps,
+                temperature=1.0,
+                stoc=False,
+                spk=None,
+                spk2=None,
+                length_scale=1.0
+                ):
         """
         Generates mel-spectrogram from text. Returns:
             1. encoder outputs

@@ -13,7 +13,7 @@
 """
 import torch
 from SER import SER
-from ..inference_lm import inference_interp
+from ..inference_cond import inference_interp
 from visualization import show_psd, show_mel
 from inference import inference_emodiff_interp, inference_fastspeech
 
@@ -34,10 +34,19 @@ emo_melstyle_dict = {
     "Happy": ""
 }
 
-eval_model = {
-    "interpTTS": "",
-    "emodiff": "",
-    "fastspeech": ""
+#
+"""
+subdir/files in *_base_dir
+
+"""
+eval_gradtts_base_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
+eval_fastspeech_base_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
+eval_emodiff_base_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
+
+eval_model_base_dir = {
+    "interpTTS": eval_gradtts_base_dir + "gradtts_crossSelf_puncond_n1_neworder",
+    "emodiff": eval_emodiff_base_dir + "",
+    "fastspeech": eval_fastspeech_base_dir + ""
 }
 
 case_study_example_temp = {
@@ -122,11 +131,18 @@ def get_configs(model_name, logs_dir):
         return ""
 
 
-class Temp_interp_eval:
+class InterpTempEval:
     def __init__(self,
-                 emos,
+                 paired_emos=("Angry_Sad", "Sad_Hap", "Angry_Happy"),
+                 model_names=("interpTTS", "emodiff", "fastspeech"),
+                 exp_outdir="",
+                 ser_model=SER,
+                 ser_model_config="",
+                 interp_type="temp",
+                 need_syn=True
                  ):
         """
+        Synthesize speech from proposed/benchmarked models and evaluate them.
         generate temp interpolation by given below two emotions:
         Ang -> Sad
         Sad -> Hap
@@ -135,32 +151,33 @@ class Temp_interp_eval:
         # Test emotions for Interp
         # Test TTS models (orig, ) for synthesizing
         # SER
-        self.paired_emos = ["Angry_Sad", "Sad_Hap", "Angry_Happy"]
-        self.ser = SER()
-        self.model_names = ["interpTTS", "emodiff", "fastspeech"]
-
-        self.exp_outdir = ""
-        self.interp_type = "temp"
+        self.paired_emos = paired_emos
+        self.ser = ser_model(ser_model_config)
+        self.model_names = model_names
+        self.exp_outdir = exp_outdir
+        self.interp_type = interp_type
 
         # generate speech from given emo labels and melstyles
+        if need_syn:
+            self.synthesize_from_models()
 
+    def synthesize_from_models(self):
         for model_name in self.model_names:
             if model_name == "interpTTS":
-                logs_dir_par = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
-                logs_dir = logs_dir_par + "gradtts_crossSelf_v2/"
+                eval_base_dir = eval_model_base_dir(model_name)
+                model_config, kwargs, out_dir = get_configs(model_name, logs_dir=eval_base_dir)
 
-                model_config, kwargs, out_dir = get_configs(model_name, logs_dir=logs_dir)
                 for pr_emos in self.paired_emos:
                     emo1, emo2 = pr_emos.split("_")
                     emo_label1, emo_label2 = emo_num_dict[emo1], emo_num_dict[emo2]
                     melstyle1, melstyle2 = emo_melstyle_dict[emo1], emo_melstyle_dict[emo2]
-
                     inference_interp(
                         model_config,
                         emo_label1=emo_label1,
                         melstyle1=melstyle1,
                         emo_label2=emo_label2,
                         melstyle2=melstyle2,
+                        out_dir=out_dir,
                         **kwargs,
                     )
 
@@ -185,25 +202,28 @@ class Temp_interp_eval:
                         style1=emo_melstyle_dict[emo1],
                         style2=emo_melstyle_dict[emo1]
                     )
-
                     inference_fastspeech(
                         style=style12
                     )
             else:
                 print("please choose model from emodiff, fastspeech, or interptts")
 
-    def eval_serDetect(self, need_pref_test=True, pref_num=5):
+    def eval_serDetect(self,
+                       need_pref_test=True,
+                       pref_num=5):
         """
         detect 1st/2nd half emotion by SER
         Returns:
 
         """
         # SER test for each model
-        for model_name in self.model_names:
-            audio_gd_dict = get_audio_gd(self.exp_outdir)    # {"a.wav": ("ang", "sad"), ...}
-            audio_pred_dict = get_twohalf_emo(self.SER, list(audio_gd_dict.keys()))  # {"a.wav": [("ang", "sad")], ...}
-            acc_res = get_acc_res(audio_gd_dict, audio_pred_dict)  # {"ang_sad": (0.8, 0.9), ...}
-            print(acc_res)
+        eval_base_dir = eval_model_base_dir(self.model_name)
+        model_config, kwargs, out_dir = get_configs(self.model_name, logs_dir=eval_base_dir)
+
+        audio_gd_dict = get_audio_gd(self.exp_outdir)    # {"a.wav": ("ang", "sad"), ...}
+        audio_pred_dict = get_twohalf_emo(self.SER, list(audio_gd_dict.keys()))  # {"a.wav": [("ang", "sad")], ...}
+        acc_res = get_acc_res(audio_gd_dict, audio_pred_dict)  # {"ang_sad": (0.8, 0.9), ...}
+        print(acc_res)
 
         # preference Test
         if need_pref_test:
@@ -287,13 +307,23 @@ def create_pref_dir(audio_gd_pref_dict):
 
 
 if __name__ == '__main__':
-    TEMP_INTERP = False
+    TEMP_INTERP = True
     FREW_INTERP = False
     NON_INTERP = False
 
     if TEMP_INTERP:
         SER_EVAL, PREF_EVAL, CASE_EVAL = False, False, False
-        temp_eval = Temp_interp_eval()
+        temp_eval = InterpTempEval(
+            paired_emos=("Angry_Sad", "Sad_Hap", "Angry_Happy"),
+            model_names=("interpTTS"),
+            exp_outdir="",
+            ser_model=SER,
+            ser_model_config="",
+            interp_type="temp"
+        )
+        temp_eval.eval_serDetect(
+
+        )
         # SER test
         if SER_EVAL:
             temp_eval.eval_serDetect()
@@ -308,7 +338,7 @@ if __name__ == '__main__':
 
         # PSD match test
         if PSD_MATCH_EVAL:
-            temp_eval = Temp_interp_eval()
+            temp_eval = InterpTempEval()
             temp_eval.eval_serDetect()
         # Case study
 

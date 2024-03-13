@@ -13,12 +13,13 @@ import torch.nn.functional as F
 from GradTTS.model.base import BaseModule
 from GradTTS.model.diffusion import *
 from GradTTS.model.estimators import GradLogPEstimator2dCond
-
+from GradTTS.model.sampleGuidence import SampleGuidence
 # diffuser
 from src.diffusers import UNet2DConditionModel
 
 
 class CondDiffusion(BaseModule):
+
     """
     Conditional Diffusion that denoising mel-spectrogram from latent normal distribution
     """
@@ -26,6 +27,7 @@ class CondDiffusion(BaseModule):
     def __init__(self,
                  n_feats,
                  dim,
+                 sample_channel_n=1,
                  n_spks=1,
                  spk_emb_dim=64,
                  emo_emb_dim=768,
@@ -33,7 +35,10 @@ class CondDiffusion(BaseModule):
                  beta_max=20,
                  pe_scale=1000,
                  data_type="melstyle",
-                 att_type="linear"
+                 att_type="linear",
+                 att_dim=128,
+                 heads=4,
+                 p_uncond=0.2,
                  ):
         """
 
@@ -58,13 +63,6 @@ class CondDiffusion(BaseModule):
         self.data_type = data_type
         self.att_type = att_type
 
-        # choose unit model
-        #if self.data_type == "melstyle" or self.data_type == "psd":
-        if self.att_type == "linear":
-            sample_channel_n = 3
-        else:
-            sample_channel_n = 1
-
         self.estimator = GradLogPEstimator2dCond(dim,
                                                  sample_channel_n=sample_channel_n,
                                                  n_spks=n_spks,
@@ -72,8 +70,10 @@ class CondDiffusion(BaseModule):
                                                  pe_scale=pe_scale,
                                                  emo_emb_dim=emo_emb_dim,
                                                  att_type=att_type,
+                                                 att_dim=att_dim,
+                                                 heads=heads,
+                                                 p_uncond=p_uncond,
                                                  )
-
     def forward_diffusion(self, x0, mask, mu, t):
         time = t.unsqueeze(-1).unsqueeze(-1)
         cum_noise = get_noise(time, self.beta_min, self.beta_max, cumulative=True)
@@ -96,10 +96,11 @@ class CondDiffusion(BaseModule):
                           melstyle=None,
                           emo_label=None,
                           align_len=None,
-                          align_mtx=None
+                          align_mtx=None,
+                          guidence_strength=3.0
                           ):
         """
-        Denoising process, given z, mu and conditioned on emolabel, psd, spk
+        Denoise process, given z, mu and conditioned on emolabel, psd, spk
         mel_len = 100 for length consistence
         Args:
             z:      (b, 80, mel_len)
@@ -134,7 +135,8 @@ class CondDiffusion(BaseModule):
                 melstyle=melstyle,
                 emo_label=emo_label,
                 align_len=align_len,
-                align_mtx=align_mtx
+                align_mtx=align_mtx,
+                guidence_strength=guidence_strength
             )
             dxt_det = 0.5 * (mu - xt) - score_emo
 
@@ -162,14 +164,20 @@ class CondDiffusion(BaseModule):
             spk=None,
             melstyle1=None,
             emo_label1=None,
+            pitch1=None,
             melstyle2=None,
             emo_label2=None,
+            pitch2=None,
             align_len=None,
             align_mtx=None,
-            interp_type="simple",
+            interp_type="simp",
+            mask_time_step=None,
+            mask_all_layer=True,
+            temp_mask_value=0,
+            guidence_strength=3.0
     ):
         """
-
+        Interpolated in 3 mode: simp, temp, freq
         Args:
             z:
             mask:
@@ -181,12 +189,13 @@ class CondDiffusion(BaseModule):
             emo_label1:
             melstyle2:
             emo_label2:
-            align_len:
+            align_len:  Align len for hids.
             align_mtx:
             interp_type:
-                "simp":
-                "temp":
-                "freq"
+                "simp": weighted sum of emo_label and melstyle.
+                "temp": add 1st/2nd half mask to two attention map for temporal level interp.
+                "freq": Guide sample noise that the attention map
+                focus on pitch/harmonic and others in earlier and later stage
         Returns:
 
         """
@@ -221,11 +230,12 @@ class CondDiffusion(BaseModule):
                     melstyle=melstyle,
                     emo_label=emo_label,
                     align_len=align_len,
-                    align_mtx=align_mtx
+                    align_mtx=align_mtx,
+                    guidence_strength=guidence_strength
                 )
             elif interp_type == "temp":
-                if i < int(n_timesteps / 3):
-                    score_emo = self.estimator.forward_temporal_interp(
+                if i < int(mask_time_step):
+                    score_emo = self.estimator.forward_temp_interp(
                         x=xt,
                         mask=mask,
                         mu=mu,
@@ -236,7 +246,9 @@ class CondDiffusion(BaseModule):
                         melstyle2=melstyle2,
                         emo_label2=emo_label2,
                         align_len=align_len,
-                        align_mtx=align_mtx
+                        align_mtx=align_mtx,
+                        mask_all_layer=mask_all_layer,
+                        temp_mask_value=temp_mask_value
                     )
                 else:
                     score_emo = self.estimator(
@@ -251,7 +263,29 @@ class CondDiffusion(BaseModule):
                         align_mtx=align_mtx
                     )
             elif interp_type == "freq":
-                pass
+                guid_scale = 0.1
+                tal = 0.7
+                alpha = 0.08
+
+                score_emo = self.estimator.forward_freq_interp(
+                    x=xt,
+                    mask=mask,
+                    mu=mu,
+                    t=t,
+                    spk=spk,
+                    melstyle1=melstyle1,
+                    emo_label1=emo_label1,
+                    pitch1=pitch1,
+                    melstyle2=melstyle2,
+                    emo_label2=emo_label2,
+                    pitch2=pitch2,
+                    align_len=align_len,
+                    align_mtx=align_mtx,
+                    guide_scale=guid_scale,
+                    tal=tal,
+                    alpha=alpha,
+                )
+
             else:
                 print("Wrong inter_type")
 
@@ -342,7 +376,8 @@ class CondDiffusion(BaseModule):
                 melstyle=None,
                 emo_label=None,
                 align_len=None,
-                align_mtx=None
+                align_mtx=None,
+                guidence_strength=3.0
                 ):
         return self.reverse_diffusion(z=z,
                                       mask=mask,
@@ -354,7 +389,8 @@ class CondDiffusion(BaseModule):
                                       melstyle=melstyle,
                                       emo_label=emo_label,
                                       align_len=align_len,
-                                      align_mtx=align_mtx
+                                      align_mtx=align_mtx,
+                                      guidence_strength=guidence_strength
                                       )
 
     def loss_t(self,

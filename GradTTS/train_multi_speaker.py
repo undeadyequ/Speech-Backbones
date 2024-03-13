@@ -23,6 +23,11 @@ from utils import plot_tensor, save_plot
 from text.symbols import symbols
 import yaml
 from model.utils import fix_len_compatibility
+sys.path.append('./hifi-gan/')
+from env import AttrDict
+from models import Generator as HiFiGAN
+from scipy.io.wavfile import write
+import json
 
 """
 train_filelist_path = params.train_filelist_path
@@ -110,6 +115,7 @@ def train_process_cond(configs):
 
     ## Decoder
     dec_dim = int(model_config["decoder"]["dec_dim"])
+    sample_channel_n = int(model_config["decoder"]["sample_channel_n"])
     beta_min = float(model_config["decoder"]["beta_min"])
     beta_max = float(model_config["decoder"]["beta_max"])
     pe_scale = int(model_config["decoder"]["pe_scale"])
@@ -120,6 +126,9 @@ def train_process_cond(configs):
     ### unet
     unet_type = model_config["unet"]["unet_type"]
     att_type = model_config["unet"]["att_type"]
+    att_dim = model_config["unet"]["att_dim"]
+    heads = model_config["unet"]["heads"]
+    p_uncond = model_config["unet"]["p_uncond"]
 
     # train
     batch_size = int(train_config["batch_size"])
@@ -177,11 +186,16 @@ def train_process_cond(configs):
                         window_size,
                         n_feats,
                         dec_dim,
+                        sample_channel_n,
                         beta_min,
                         beta_max,
                         pe_scale,
                         unet_type,
-                        att_type).cuda()
+                        att_type,
+                        att_dim,
+                        heads,
+                        p_uncond,
+                        ).cuda()
     print(model)
     """
     print('Number of encoder parameters = %.2fm' % (model.encoder.nparams / 1e6))
@@ -204,6 +218,10 @@ def train_process_cond(configs):
 
     print('Start training...')
     iteration = 0
+    show_img_per_epoch = 5.0
+    # create vocoder
+    vocoder = get_vocoder()
+
     for epoch in range(resume_epoch + 1, n_epochs + 1):
         model.eval()
         print('Synthesis...')
@@ -247,12 +265,19 @@ def train_process_cond(configs):
                 logger.add_image(f'image_{i}/alignment',
                                  plot_tensor(attn.squeeze().cpu()),
                                  global_step=iteration, dataformats='HWC')
-                save_plot(y_enc.squeeze().cpu(),
-                          f'{log_dir}/generated_enc_{i}.png')
-                save_plot(y_dec.squeeze().cpu(),
-                          f'{log_dir}/generated_dec_{i}.png')
-                save_plot(attn.squeeze().cpu(),
-                          f'{log_dir}/alignment_{i}.png')
+                # show image and audio (show initiate image to check earlierly)
+                if epoch % show_img_per_epoch == 0 or epoch == 1 or epoch == 2 or epoch == 3:
+                    save_plot(y_enc.squeeze().cpu(),
+                              f'{log_dir}/generated_enc_{i}_epoch{epoch}.png')
+                    save_plot(y_dec.squeeze().cpu(),
+                              f'{log_dir}/generated_dec_{i}_epoch{epoch}.png')
+                    save_plot(attn.squeeze().cpu(),
+                              f'{log_dir}/alignment_{i}_epoch{epoch}.png')
+                    # synthesize audio
+                    audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
+                    ## create folder if not exist
+                    write(f'{log_dir}/sample_{i}_epoch{epoch}.wav', 22050, audio)
+
 
         model.train()
         dur_losses = []
@@ -327,6 +352,7 @@ from typing import Sequence
 from typing import Union
 from pathlib import Path
 
+
 def resume(
     checkpoint: Union[str, Path],
     model: torch.nn.Module,
@@ -342,6 +368,17 @@ def resume(
         optimizer.load_state_dict(state)
     """
 
+
+def get_vocoder():
+    HIFIGAN_CONFIG = './checkpts/hifigan-config.json'  # ./checkpts/config.json
+    HIFIGAN_CHECKPT = './checkpts/hifigan.pt'
+    with open(HIFIGAN_CONFIG) as f:
+        h = AttrDict(json.load(f))
+    vocoder = HiFiGAN(h)
+    vocoder.load_state_dict(torch.load(HIFIGAN_CHECKPT, map_location=lambda loc, storage: loc)['generator'])
+    _ = vocoder.cuda().eval()
+    vocoder.remove_weight_norm()
+    return vocoder
 
 if __name__ == "__main__":
     import argparse

@@ -109,3 +109,102 @@ def align(
         print("wrong condtype!")
 
     return cond_aligned
+
+
+import numpy as np
+import tgt
+import librosa
+import pyworld as pw
+
+
+def get_alignment(tier, sampling_rate=16000, hop_length=256):
+    """
+    Get alignment from TextGrid file
+    Args:
+        tier:
+        sampling_rate:
+        hop_length:
+
+    Returns:
+
+    """
+    sil_phones = ["sil", "sp", "spn"]
+
+    phones = []
+    durations = []
+    start_time = 0
+    end_time = 0
+    end_idx = 0
+    for t in tier._objects:
+        s, e, p = t.start_time, t.end_time, t.text
+
+        # Trim leading silences
+        if phones == []:
+            if p in sil_phones:
+                continue
+            else:
+                start_time = s
+
+        if p not in sil_phones:
+            # For ordinary phones
+            phones.append(p)
+            end_time = e
+            end_idx = len(phones)
+        else:
+            # For silent phones
+            phones.append(p)
+
+        durations.append(
+            int(
+                np.round(e * sampling_rate / hop_length)
+                - np.round(s * sampling_rate / hop_length)
+            )
+        )
+
+    # Trim tailing silences
+    phones = phones[:end_idx]
+    durations = durations[:end_idx]
+
+    return phones, durations, start_time, end_time
+
+
+def extract_pitch(wav_f,
+                  wav_tg_f,
+                  sampling_rate=16000,
+                  hop_length=256,
+                  need_trim=False
+                  ):
+    """
+
+    Args:
+        wav_f:
+        sampling_rate:
+        hop_length:
+
+    Returns:
+
+    """
+    # get start end
+    textgrid = tgt.io.read_textgrid(wav_tg_f)
+    phone, duration, start, end = get_alignment(
+        textgrid.get_tier_by_name("phones"),
+        sampling_rate,
+        hop_length
+    )
+
+    # get trimed wav
+    wav, fs = librosa.load(wav_f)
+    if need_trim:
+        # trim by textgrid
+        wav = wav[int(fs * start): int(fs * end)]
+
+    wav = wav.astype(np.float64)
+
+    # get pitch
+    _f0, _time = pw.dio(wav,
+                        fs,
+                        frame_period=256 / sampling_rate * 1000
+                        )
+    f0 = pw.stonemask(wav, _f0, _time, fs)
+
+    return f0

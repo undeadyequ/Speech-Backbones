@@ -1,8 +1,11 @@
-
+import os.path
 from einops import rearrange
 import math
 import torch
 import torch.nn.functional as F
+import numpy as np
+import librosa
+from GradTTS.model.utils import extract_pitch
 from GradTTS.model.base import BaseModule
 from GradTTS.model.diffusion import *
 from GradTTS.model.utils import align
@@ -23,11 +26,10 @@ class GradLogPEstimator2dCond(BaseModule):
                  att_type="linear",
                  att_dim=128,
                  heads=4,
-                 p_uncond=0.2,
-                 guidence_strength=0.1
+                 p_uncond=0.9,
                  ):
         """
-
+        classifier free guidance
         Args:
             dim:
             dim_mults:
@@ -50,7 +52,6 @@ class GradLogPEstimator2dCond(BaseModule):
         self.att_type = att_type
         self.heads = heads
         self.p_uncond = p_uncond
-        self.guidence_strength = guidence_strength
 
         if n_spks > 1:
             self.spk_mlp = torch.nn.Sequential(torch.nn.Linear(spk_emb_dim, spk_emb_dim * 4), Mish(),
@@ -109,9 +110,12 @@ class GradLogPEstimator2dCond(BaseModule):
                 melstyle=None,
                 emo_label=None,
                 align_len=None,
-                align_mtx=None
+                align_mtx=None,
+                guidence_strength=3.0,
+                return_attmap=False
                 ):
         """
+        Predict noise on classifier-free guidance where the noised of conditioned and unconditioned are weighted added.
 
         att_type option
             linear (self-attention):
@@ -133,47 +137,45 @@ class GradLogPEstimator2dCond(BaseModule):
             output: (b, 80, mel_len)
         """
         # Regularize unet input1: xt and enc_hids
-        if align_len is not None:
-            spk_align = align(spk, align_len, condtype="noseq")
-            emo_label_align = align(emo_label, align_len, condtype="noseq")
-            if align_mtx is not None:   # Only for inference
-                melstyle = align(melstyle, align_len, align_mtx, condtype="seq")
+        x, hids = align_cond_input(x, mu, spk, melstyle, emo_label, align_len, align_mtx, self.att_type)
 
-        # Concatenate condition by different attention
-        if self.att_type == "linear":
-            x = torch.stack([x, mu, spk_align, emo_label_align], 1)
-            hids = None
-        elif self.att_type == "cross":
-            x = torch.stack([x, mu], 1)
-            hids = torch.concat([spk_align, melstyle, emo_label_align], dim=1)
-        else:
-            print("bad attn type!")
-
-        # p_uncondition
+        # Joint training diff model with uncond/cond by p_uncondition
         if self.training:
-            if torch.randn(1) < self.p_uncond:
-                hids = x.clone()  # <- NO condition ??
+            p = torch.rand(1)
+            if p < self.p_uncond:
+                b, c, d_q, l_q = x.shape
+                hids = x.clone()   # <- discard conditioning with p_uncond
+                hids = hids.view(b, -1, l_q)
             res = self.forward_to_unet(x, mask, hids, t)
+        # Conditional sampling with weighted noise of uncond/cond
         else:
-            cond_res = self.forward_to_unet(x, mask, hids, t)
-
-            hids = x.clone()  # <- NO condition ??
+            if return_attmap:
+                cond_res, attn_amp = self.forward_to_unet(x, mask, hids, t, return_attmap=return_attmap)
+            else:
+                cond_res = self.forward_to_unet(x, mask, hids, t, return_attmap=return_attmap)
+            b, c, d_q, l_q = x.shape
+            hids = x.clone()  # <- NO condition
+            hids = hids.view(b, -1, l_q)
             uncond_res = self.forward_to_unet(x, mask, hids, t)
-            res = (1 + self.guidence_strength) * cond_res - self.guidence_strength * uncond_res
+            res = (1 + guidence_strength) * cond_res - guidence_strength * uncond_res
+            if return_attmap:
+                return res, attn_amp
         return res
 
     def forward_to_unet(self,
                         x,
                         mask,
                         hids,
-                        t):
-        # Judge whether show att map
+                        t,
+                        show_attmap=False,
+                        return_attmap=False):
+        # show att map when t in ATTN_MAP_SHOW_range
         ATTN_MAP_SHOW_range = (0.2, 0.24)  # <- check front (near 1) or back (near 0)
         ATTN_MAP_SHOW_FLAG = False
         if (torch.tensor(ATTN_MAP_SHOW_range[0], dtype=t.dtype, device=t.device)
-                < t[0] < torch.tensor(ATTN_MAP_SHOW_range[1], dtype=t.dtype, device=t.device)):
+                < t[0] < torch.tensor(ATTN_MAP_SHOW_range[1], dtype=t.dtype, device=t.device)) and show_attmap:
             t_show = t[0].detach().cpu().numpy()
-            ATTN_MAP_SHOW_FLAG = True
+            ATTN_MAP_SHOW_FLAG = True  # only show the attention of first unet layer.
 
         # Regularize Unet input2: Time projection
         t = self.time_pos_emb(t, scale=self.pe_scale)
@@ -189,7 +191,8 @@ class GradLogPEstimator2dCond(BaseModule):
             hiddens.append(x)
             x = downsample(x * mask_down)  # -> (b, c_out_i, d/2, l/2)
             masks.append(mask_down[:, :, :, ::2])
-            #### show image ####
+
+            #### show Attn image ####
             if ATTN_MAP_SHOW_FLAG:
                 head_n = attn_map.shape[1]
                 for h in range(head_n):
@@ -213,24 +216,31 @@ class GradLogPEstimator2dCond(BaseModule):
             x = upsample(x * mask_up)
         x = self.final_block(x, mask)
         output = self.final_conv(x * mask)
-        return (output * mask).squeeze(1)
 
+        if return_attmap:
+            attn_map = torch.cat(
+                [attn_map[:, i, :, :] for i in range(attn_map.size(1))], dim=-2)  # (b, d_q * l_q, d_m * h)
+            return (output * mask).squeeze(1), attn_map  # ?? which attn_map ??
+        else:
+            return (output * mask).squeeze(1)
 
-    def forward_temporal_interp(self,
-                x,
-                mask,
-                mu,
-                t,
-                spk=None,
-                melstyle1=None,
-                emo_label1=None,
-                melstyle2=None,
-                emo_label2=None,
-                align_len=None,
-                align_mtx=None
-                ):
+    def forward_temp_interp(self,
+                            x,
+                            mask,
+                            mu,
+                            t,
+                            spk=None,
+                            melstyle1=None,
+                            emo_label1=None,
+                            melstyle2=None,
+                            emo_label2=None,
+                            align_len=None,
+                            align_mtx=None,
+                            mask_all_layer=True,
+                            temp_mask_value=0
+                            ):
         """
-
+        interpolating inference
         att_type option
             linear (self-attention):
                 x = x + emo + psd
@@ -247,6 +257,8 @@ class GradLogPEstimator2dCond(BaseModule):
             emo_label: (b, 1, emo_num)
             psd [tuple]: ((b, word_len), (b, word_len), (b, word_len))
             melstyle: (b, 80, mel_len)
+            align_mtx
+
         Returns:
             output: (b, 80, mel_len)
         """
@@ -262,27 +274,26 @@ class GradLogPEstimator2dCond(BaseModule):
         hiddens = []
         masks = [mask]
 
-        temp_mask_value = 0
-        MASK_ALL_UNET_LAYER = False
-
         for i, (resnet1, resnet2, attn, downsample) in enumerate(self.downs):         # c d l -> c*2 d/2 l/2 as layer increase
             mask_down = masks[-1]
             x = resnet1(x, mask_down, t)   # (b, c, d, l) -> (b, c_out_i, d, l)
             x = resnet2(x, mask_down, t)   # -> (b, c_out_i, d, l)
 
             # compute temporal mask and get temporally interpolated x
-            if i == 0 or MASK_ALL_UNET_LAYER:
+            if i == 0 or mask_all_layer:  ## ?? good
                 b, _, d_q, l_q = x.shape
+                # generate 1st/2nd mask (e.g. mask left/right)
                 temp_mask_left, temp_mask_right = create_left_right_mask(b, self.heads, d_q, l_q)
                 x_left, attn_map_left = attn(x, key=hids1, value=hids1, attn_mask=temp_mask_left,
                               mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
                 x_right, attn_map_right = attn(x, key=hids2, value=hids2, attn_mask=temp_mask_right,
                                mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
+                # combine sample
                 x = x_left + x_right
             else:
+                # only apply reference audio2 in other layers
                 temp_mask_left, temp_mask_right = None, None
-                x, attn_map = attn(x, key=hids2, value=hids2, attn_mask=temp_mask_right,
-                               mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
+                x, attn_map = attn(x, key=hids2, value=hids2)  # -> (b, c_out_i, d, l)
             hiddens.append(x)
             x = downsample(x * mask_down)  # -> (b, c_out_i, d/2, l/2)
             masks.append(mask_down[:, :, :, ::2])
@@ -291,14 +302,13 @@ class GradLogPEstimator2dCond(BaseModule):
         mask_mid = masks[-1]
 
         x = self.mid_block1(x, mask_mid, t)
-        if MASK_ALL_UNET_LAYER:
+        if mask_all_layer:
             x_left, attn_map_left = self.mid_attn(x, hids1, hids1, attn_mask=temp_mask_left, mask_value=temp_mask_value)
             x_right, attn_map_right = self.mid_attn(x, hids2, hids2, attn_mask=temp_mask_right, mask_value=temp_mask_value)
             x = x_left + x_right
         else:
-            x = self.mid_attn(x, hids2, hids2, attn_mask=temp_mask_right, mask_value=temp_mask_value)
+            x, _ = self.mid_attn(x, hids2, hids2)
         x = self.mid_block2(x, mask_mid, t)
-
 
         for i, (resnet1, resnet2, attn, upsample) in enumerate(self.ups):
             mask_up = masks.pop()
@@ -307,7 +317,7 @@ class GradLogPEstimator2dCond(BaseModule):
             x = resnet2(x, mask_up, t)
 
             # compute temporal mask and get temporally interpolated x
-            if i == 0 or MASK_ALL_UNET_LAYER:
+            if i == 0 or mask_all_layer:
                 b, _, d_q, l_q = x.shape
                 temp_mask_left, temp_mask_right = create_left_right_mask(b, self.heads, d_q, l_q)
                 x_left, attn_map_left = attn(x, key=hids1, value=hids1,
@@ -325,6 +335,173 @@ class GradLogPEstimator2dCond(BaseModule):
         x = self.final_block(x, mask)
         output = self.final_conv(x * mask)
         return (output * mask).squeeze(1)
+
+    def forward_freq_interp(self,
+                            x,
+                            mask,
+                            mu,
+                            t,
+                            spk=None,
+                            melstyle1=None,
+                            emo_label1=None,
+                            pitch1=None,
+                            melstyle2=None,
+                            emo_label2=None,
+                            pitch2=None,
+                            align_len=None,
+                            align_mtx=None,
+                            guide_scale=1.0,
+                            tal=40,
+                            alpha=0.08
+                            ):
+        """
+        Reference
+        Args:
+            x:
+            mask:
+            mu:
+            t:
+            spk:
+            melstyle1:
+            emo_label1:
+            pitch1:
+            melstyle2:
+            emo_label2:
+            pitch2:
+            align_len:
+            align_mtx:
+            guide_scale:
+            tal:
+            alpha:
+
+        Returns:
+
+        """
+        if t < tal:
+            # get guid mask from melstyle or prosodic contours ?
+            guid_mask = create_pitch_bin_mask(
+                pitch1,
+                melstyle1
+            ) # (l_k1, 80)
+
+            # train tunable noise
+            epoch = 2
+            for i in range(epoch):
+                x_guided = self.guide_sample(
+                    x,
+                    guid_mask,
+                    mask,
+                    mu,
+                    t,
+                    spk,
+                    melstyle1,
+                    emo_label1,
+                    align_len,
+                    align_mtx,
+                    guide_scale,
+                    alpha
+                )
+            score = self.forward(
+                x_guided,
+                mask,
+                mu,
+                t,
+                spk,
+                psd=None,
+                melstyle=melstyle1,
+                emo_label=emo_label1,
+                align_len=align_len,
+                align_mtx=align_mtx) # ?? Any problem ??
+        else:
+            score = self.forward(
+                x,
+                mask,
+                mu,
+                t,
+                spk,
+                psd=None,
+                melstyle=melstyle2,
+                emo_label=emo_label2,
+                align_len=align_len,
+                align_mtx=align_mtx) # ?? Any problem ??
+        return score
+
+    def guide_sample(
+            self,
+            x: torch.Tensor,
+            guid_mask: torch.Tensor,
+            mask: torch.Tensor,
+            mu: torch.Tensor,
+            t,
+            spk,
+            melstyle,
+            emo_label,
+            align_len,
+            align_mtx,
+            guide_scale: float,
+            tal=40,
+            alpha=0.08
+    ):
+        """
+        Guide sample by single ref audio
+
+        # set x to require_grad
+        # set optimizer with x
+        # set loss = attn_in_mask + attn_out_mask
+        # get x_guided
+        # get x_guided_score = unet(x_guided)
+
+        Args:
+            x ():
+            guid_mask (l_k, 80):
+            mask ():
+            mu ():
+            cond ():
+
+        Returns:
+            x_guided_score
+        """
+        loss = 0
+        # set x to require_grad
+        x_guided = x.clone().detach()
+        x_guided.requires_grad = True
+
+        # set optimizer with x
+        optim = torch.optim.SGD([x_guided], lr=alpha)
+        # set loss = attn_in_mask + attn_out_mask
+        score_emo, attn_score = self.forward(x_guided,
+                                       mask,
+                                       mu,
+                                       t,
+                                       spk,
+                                       psd=None,
+                                       melstyle=melstyle,
+                                       emo_label=emo_label,
+                                       align_len=align_len,
+                                       align_mtx=align_mtx,
+                                       return_attmap=True
+                                       ) # ...,  (b, l_q * d_q<-80, l_k) ?
+        if len(attn_score.shape) == 3:
+            attn_score = attn_score[0]
+        guid_mask = guid_mask.view(guid_mask.shape[0] * guid_mask.shape[1])
+        # align guid_mask with length of key to length of query
+        if len(guid_mask) < attn_score.shape[0]:
+            p1d = (0, attn_score.shape[0] - len(guid_mask))
+            guid_mask = F.pad(guid_mask, p1d, "constant", 0)
+        else:
+            guid_mask = guid_mask[:attn_score.shape[0]]
+        # Concentrate the attention on ?
+        loss += -attn_score[guid_mask == 1].sum()
+        loss += guide_scale * attn_score[guid_mask == 0].sum()
+        loss.requires_grad = True
+        loss.backward()
+
+        # get x_guided updated
+        optim.step()
+
+        # get x_guided_score = unet(x_guided)
+
+        return x_guided
 
 
 def create_left_right_mask(b, heads, d_q, l_q, device="cuda"):
@@ -393,9 +570,68 @@ def align_cond_input(x, mu, spk, melstyle, emo_label, align_len, align_mtx, att_
         x = torch.stack([x, mu, spk_align, emo_label_align], 1)
         hids = None
     elif att_type == "cross":
-        x = torch.stack([x, mu], 1)
+        # In order to make the dim of channel (3) * 80 same as hids (240) for classifier-free guidance
+        x = torch.stack([x, mu, mu], 1)
+        #x = torch.stack([x, mu], 1)
         hids = torch.concat([spk_align, melstyle, emo_label_align], dim=1)
         # hids = torch.stack([spk_align, melstyle, emo_label_align], dim=1)
     else:
         print("bad att type!")
     return x, hids
+
+
+def create_pitch_bin_mask(wav_f,
+                          mel_spectrogram,
+                          n_mels=80,
+                          fmin=0.0,
+                          fmax=8000.0
+                          ):
+    """
+    create pitch_bin mask given psd contours (Only in Inference)
+    # change pitch_contour to pitch_bin_contour (denormalization to freq to bin)
+    # pitch_bin_contour to pitch_bin_mask
+
+    Args:
+        wav_f:
+        mel_spectrogram: (b, ?, 768)
+        psd_contours: (b, 3, r)
+        psd_mask : (b, 3)
+
+    Returns:
+        pitch_bin_mask = (b, c, d, l)
+
+    """
+    # Trim speech ?? no Need trim ?? -> if trim shorter than mel, no trim far greater than mel
+    tg_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/TextGrid"
+    wav_base = os.path.basename(wav_f).split(".")[0]
+    tg_sub_dir = tg_dir + "/" + wav_base.split("_")[0]
+    tg_f = tg_sub_dir + "/" + wav_base + ".TextGrid"
+
+    pitch_contour = extract_pitch(wav_f, tg_f, need_trim=True)
+    # TEMP: pad/remove pitch length to match with mel
+    if len(mel_spectrogram.shape) == 3:
+        mel_spectrogram = mel_spectrogram.squeeze()
+    if len(pitch_contour) < mel_spectrogram.shape[0]:
+        pitch_contour = np.append(pitch_contour, [0.0] * (len(mel_spectrogram) - len(pitch_contour)))
+    elif len(pitch_contour) > mel_spectrogram.shape[0]:
+        pitch_contour = pitch_contour[:mel_spectrogram.shape[0]]
+    else:
+        print("Pitch length match mel length")
+
+    # change pitch_contour to pitch_bin_contour (denormalization -> ?)
+    # pitch freq to mel bin given frequencies tuned to mel scale.
+    freq_list = librosa.mel_frequencies(n_mels=n_mels, fmin=fmin, fmax=fmax, htk=False)
+    # Convert pitch hz to mel bin for each mel frame
+    pitch_mel_bin_list = []  # (mel_n, )
+    for pitch in pitch_contour:
+        pitch_mel_bin = np.argmin(abs(freq_list - pitch))
+        pitch_mel_bin_list.append(pitch_mel_bin)
+
+    pitch_bin_mask = torch.zeros_like(mel_spectrogram)
+    for fr_th in range(mel_spectrogram.shape[0]):
+        # map the i-th frame to j-th pitch <- if len(mel) != len(pitch)
+        #pit_th = pitmel_align_score[fr_th]
+        fr_mel_bin = pitch_mel_bin_list[fr_th]
+        if fr_mel_bin != 0:  # Only for pitch existed!
+            pitch_bin_mask[fr_th, fr_mel_bin] = 1
+    return pitch_bin_mask
