@@ -86,8 +86,9 @@ def test_CondGradTTS():
     """
 
     TEST_REVERSE = False
-    TEST_REVERSE_INTERP = False
-    TEST_COMPUTE_LOSS = True
+    TEST_REVERSE_INTERP_TEMP = False
+    TEST_REVERSE_INTERP_FREQ = True
+    TEST_COMPUTE_LOSS = False
 
     # test condition
     model = CondGradTTS(nsymbols,
@@ -137,15 +138,13 @@ def test_CondGradTTS():
             output[1].size(),
             output[2].size())
         )
-    if TEST_REVERSE_INTERP:
+    if TEST_REVERSE_INTERP_TEMP:
         emolabel1 = [[0] * emo_emb_dim]
         emolabel1[0][0] = 1
         emolabel2 = [[0] * emo_emb_dim]
         emolabel2[0][1] = 1
         batch = 1
         mel_max_len = 2
-
-
         inputs_value = {
             "x": torch.randint(0, text_n, (batch, text_max_len)),
             "x_lengths": torch.randint(0, text_max_len, (batch,)),
@@ -171,6 +170,9 @@ def test_CondGradTTS():
             y_dec.size(),
             attn.size())
         )
+
+    if TEST_REVERSE_INTERP_FREQ:
+
 
     if TEST_COMPUTE_LOSS:
         inputs_value_train = {

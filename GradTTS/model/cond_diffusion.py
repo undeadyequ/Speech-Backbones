@@ -264,7 +264,8 @@ class CondDiffusion(BaseModule):
                     )
             elif interp_type == "freq":
                 guid_scale = 0.1
-                tal = 0.7
+                tal1 = 0.6
+                tal2 = 0.8
                 alpha = 0.08
 
                 score_emo = self.estimator.forward_freq_interp(
@@ -282,10 +283,10 @@ class CondDiffusion(BaseModule):
                     align_len=align_len,
                     align_mtx=align_mtx,
                     guide_scale=guid_scale,
-                    tal=tal,
+                    tal1=tal1,
+                    tal2=tal2,
                     alpha=alpha,
                 )
-
             else:
                 print("Wrong inter_type")
 

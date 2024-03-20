@@ -73,57 +73,56 @@ test_wav_tg_path = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/TextGr
 # data : arrayの音声データが入る
 import librosa
 
+def test_pitch_extraction():
+    # Get alignments
+    textgrid = tgt.io.read_textgrid(test_wav_tg_path)
+    phone, duration, start, end = get_alignment(
+        textgrid.get_tier_by_name("phones")
+    )
+
+    print(duration)
+
+    wav, fs = librosa.load(test_wav_f)
+    wav = wav[
+          int(fs * start): int(fs * end)
+          ].astype(np.float64)
 
 
-# Get alignments
-textgrid = tgt.io.read_textgrid(test_wav_tg_path)
-phone, duration, start, end = get_alignment(
-    textgrid.get_tier_by_name("phones")
-)
+    # floatでないとworldは扱えない
+    _f0, _time = pw.dio(wav, fs,
+                        frame_period=256 / 16000 * 1000,
+                        )    # 基本周波数の抽出
+    f0 = pw.stonemask(wav, _f0, _time, fs)  # 基本周波数の修正
 
-print(duration)
+    print(fs, len(wav))
+    print(len(_f0))
+    print("len of time", len(_time))
+    print("len of pitch:", len(f0))
 
-wav, fs = librosa.load(test_wav_f)
-wav = wav[
-      int(fs * start): int(fs * end)
-      ].astype(np.float64)
+    # mel
+    mel = np.load(test_wav_mel)
+    print(mel.shape)
+    p = np.load(test_wav_pitch)
+    print(p.shape)
 
-
-# floatでないとworldは扱えない
-_f0, _time = pw.dio(wav, fs,
-                    frame_period=256 / 16000 * 1000,
-                    )    # 基本周波数の抽出
-f0 = pw.stonemask(wav, _f0, _time, fs)  # 基本周波数の修正
-
-print(fs, len(wav))
-print(len(_f0))
-print("len of time", len(_time))
-print("len of pitch:", len(f0))
-
-# mel
-mel = np.load(test_wav_mel)
-print(mel.shape)
-p = np.load(test_wav_pitch)
-print(p.shape)
-
-# --- これは音声の合成に用いる(今回は使わない)
-# sp = pw.cheaptrick(data, f0, _time, fs)  # スペクトル包絡の抽出
-# ap = pw.d4c(data, f0, _time, fs)         # 非周期性指標の抽出
-# y = pw.synthesize(f0, sp, ap, fs)    # 合成
+    # --- これは音声の合成に用いる(今回は使わない)
+    # sp = pw.cheaptrick(data, f0, _time, fs)  # スペクトル包絡の抽出
+    # ap = pw.d4c(data, f0, _time, fs)         # 非周期性指標の抽出
+    # y = pw.synthesize(f0, sp, ap, fs)    # 合成
 
 
-# 可視化
-#plt.plot(data, label="Raw Data")
-#plt.legend(fontsize=10)
-#plt.show();
+    # 可視化
+    #plt.plot(data, label="Raw Data")
+    #plt.legend(fontsize=10)
+    #plt.show();
 
 
-plt.plot(f0, linewidth=3, color="green", label="F0 contour")
-plt.legend(fontsize=10)
-plt.show();
+    plt.plot(f0, linewidth=3, color="green", label="F0 contour")
+    plt.legend(fontsize=10)
+    plt.show();
 
-"""
-plt.plot(_f0, linewidth=3, color="blue", label="F0 contour")
-plt.legend(fontsize=10)
-plt.show();
+    """
+    plt.plot(_f0, linewidth=3, color="blue", label="F0 contour")
+    plt.legend(fontsize=10)
+    plt.show();
 """

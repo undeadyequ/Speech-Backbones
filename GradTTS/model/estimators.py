@@ -351,7 +351,8 @@ class GradLogPEstimator2dCond(BaseModule):
                             align_len=None,
                             align_mtx=None,
                             guide_scale=1.0,
-                            tal=40,
+                            tal1=0.8,
+                            tal2=0.6,
                             alpha=0.08
                             ):
         """
@@ -377,13 +378,12 @@ class GradLogPEstimator2dCond(BaseModule):
         Returns:
 
         """
-        if t < tal:
+        if t < tal1:
             # get guid mask from melstyle or prosodic contours ?
             guid_mask = create_pitch_bin_mask(
                 pitch1,
                 melstyle1
-            ) # (l_k1, 80)
-
+            )  # (l_k1, 80)
             # train tunable noise
             epoch = 2
             for i in range(epoch):
@@ -399,7 +399,8 @@ class GradLogPEstimator2dCond(BaseModule):
                     align_len,
                     align_mtx,
                     guide_scale,
-                    alpha
+                    alpha,
+                    guide_pitch=True
                 )
             score = self.forward(
                 x_guided,
@@ -411,7 +412,41 @@ class GradLogPEstimator2dCond(BaseModule):
                 melstyle=melstyle1,
                 emo_label=emo_label1,
                 align_len=align_len,
-                align_mtx=align_mtx) # ?? Any problem ??
+                align_mtx=align_mtx)  # ?? Any problem ??
+        elif t >= tal1 and t < tal2:
+            guid_mask = create_pitch_bin_mask(
+                pitch1,
+                melstyle1
+            )  # (l_k1, 80)
+            # train tunable noise
+            epoch = 2
+            for i in range(epoch):
+                x_guided = self.guide_sample(
+                    x,
+                    guid_mask,
+                    mask,
+                    mu,
+                    t,
+                    spk,
+                    melstyle2,
+                    emo_label2,
+                    align_len,
+                    align_mtx,
+                    guide_scale,
+                    alpha,
+                    guide_pitch=False
+                )
+            score = self.forward(
+                x_guided,
+                mask,
+                mu,
+                t,
+                spk,
+                psd=None,
+                melstyle=melstyle2,
+                emo_label=emo_label2,
+                align_len=align_len,
+                align_mtx=align_mtx)  # ?? Any problem ??
         else:
             score = self.forward(
                 x,
@@ -440,7 +475,8 @@ class GradLogPEstimator2dCond(BaseModule):
             align_mtx,
             guide_scale: float,
             tal=40,
-            alpha=0.08
+            alpha=0.08,
+            guide_pitch=True
     ):
         """
         Guide sample by single ref audio
@@ -481,6 +517,7 @@ class GradLogPEstimator2dCond(BaseModule):
                                        align_mtx=align_mtx,
                                        return_attmap=True
                                        ) # ...,  (b, l_q * d_q<-80, l_k) ?
+        # align guidmask to attn_score
         if len(attn_score.shape) == 3:
             attn_score = attn_score[0]
         guid_mask = guid_mask.view(guid_mask.shape[0] * guid_mask.shape[1])
@@ -490,10 +527,15 @@ class GradLogPEstimator2dCond(BaseModule):
             guid_mask = F.pad(guid_mask, p1d, "constant", 0)
         else:
             guid_mask = guid_mask[:attn_score.shape[0]]
-        # Concentrate the attention on ?
-        loss += -attn_score[guid_mask == 1].sum()
-        loss += guide_scale * attn_score[guid_mask == 0].sum()
-        loss.requires_grad = True
+
+        # Sum of attn_score located inside/outside of pitchMask with guide_scale
+        if guide_pitch:
+            loss += -attn_score[guid_mask == 1].sum()
+            loss += guide_scale * attn_score[guid_mask == 0].sum()
+        else:
+            loss += -attn_score[guid_mask == 0].sum()
+            loss += guide_scale * attn_score[guid_mask == 1].sum()
+        #loss.requires_grad = True
         loss.backward()
 
         # get x_guided updated
