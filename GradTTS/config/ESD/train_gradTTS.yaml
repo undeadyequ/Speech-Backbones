@@ -1,14 +1,24 @@
 path:
   ckpt_path: "./output/ckpt/ESD"
-  log_dir: "./logs/gradtts_crossSelf_puncond_n1_neworder_fixmask/" # for training
+  # interpEmoTTS_frame2frameAttn, interpEmoTTS_linearAttn, interpEmoTTS_frame2frameAttn_noJoint
+  log_dir: "./logs/interpEmoTTS_frame2frameAttn_noJoint/" # for training
   result_path: "./output/result/ESD"
-test_size: 4
-n_epochs: 10000
+# train
+n_epochs: 1000
+resume_epoch: 0
 batch_size: 48
 learning_rate: 1e-4
 seed: 37
+
+# evaluation:
+# 1. save gd/enc/dec/align images of each test in logger
+# 2. do 1 in plot and synthesize speech of each test for show_img_per_epoch (=5) a time, and first 3 epoch
+# 3. save in every epoch
+test_size: 3
+
+
+# save model
 save_every: 1
-resume_epoch: 40
 
 # ---------------not used-------------
 optimizer:
@@ -27,3 +37,9 @@ step:
   synth_step: 100
   val_step: 100
   save_step: 3000
+
+
+
+# log_dir
+# gradtts_crossSelf_puncond_n1_neworder_fixmask:
+# interpEmoTTS_frame2frameAttn: frame to frame attention

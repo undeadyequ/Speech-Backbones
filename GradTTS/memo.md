@@ -26,6 +26,31 @@
 ### Candidate3: Initiate two noise and 
 
 
+- up and down
+in_out: [(3, 64), (64, 128), (128, 256)]
+
+orign_x_shape: [b, head, 80, d4]
+
+input x_shape: [d1, d2, d3, d4]
+d2: [(64, 128, 256), (128, 64)] -> [(h0, h0*2, h0*4), (h0*2, h0)]
+d3: [(80, 40, 20), (20, 40)] -> [(d0, d0/2, d0/4), (d0/4, d0/2)] 
+d4: [(l0, l0/2, l0/4), (l0/4, l0/2)]
+
+- get attn_mask 
+  - attn shape: (d * l , d * l_r)
+  - input x shape: (b, h, d, l)
+  - origin x shape: (b0, h0, d0, l0)
+
+from (d1, d2, d3, d4)
+
+
+up x shape: torch.Size([1, 64, 80, 228])
+up x shape: torch.Size([1, 128, 40, 114])
+up x shape: torch.Size([1, 256, 20, 57])
+down x shape: torch.Size([1, 128, 20, 57])
+down x shape: torch.Size([1, 64, 40, 114])
+
+
 ```python
 ## 1
 if t < t_tal1:
@@ -61,12 +86,13 @@ loss = -pitchMask_ref1 - non_pitchMask_ref2(2nd noise)  <- is possible ?
     - mel pitch alignment?
       - check t in pitch extraction?
 - set loss
+  - ref code
 
-## problem
+## Problem
 - The noise is not updated as expected
 - pitchMask for each attention map
 
-## evaluation
+## Evaluation
 - Pitch contour matching
 - Non-pitch contour matching
   - energy
@@ -119,7 +145,6 @@ AssertionError: was expecting embedding dimension of 80, but got 40
 
 ## Estimator list
 - Estimator List:
-
 
 
 # other

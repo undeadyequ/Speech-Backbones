@@ -29,44 +29,6 @@ from models import Generator as HiFiGAN
 from scipy.io.wavfile import write
 import json
 
-"""
-train_filelist_path = params.train_filelist_path
-valid_filelist_path = params.valid_filelist_path
-cmudict_path = params.cmudict_path
-add_blank = params.add_blank
-n_spks = params.n_spks
-spk_emb_dim = params.spk_emb_dim
-
-log_dir = params.log_dir
-n_epochs = params.n_epochs
-batch_size = params.batch_size
-out_size = params.out_size
-learning_rate = params.learning_rate
-random_seed = params.seed
-
-n_enc_channels = params.n_enc_channels
-filter_channels = params.filter_channels
-filter_channels_dp = params.filter_channels_dp
-n_enc_layers = params.n_enc_layers
-enc_kernel = params.enc_kernel
-enc_dropout = params.enc_dropout
-n_heads = params.n_heads
-window_size = params.window_size
-
-n_feats = params.n_feats
-n_fft = params.n_fft
-sample_rate = params.sample_rate
-win_length = params.win_length
-hop_length = params.hop_length
-f_min = params.f_min
-f_max = params.f_max
-
-dec_dim = params.dec_dim
-beta_min = params.beta_min
-beta_max = params.beta_max
-pe_scale = params.pe_scale
-estimator_type = params.estimator_type
-"""
 
 def train_process_cond(configs):
     preprocess_config, model_config, train_config = configs
@@ -221,7 +183,6 @@ def train_process_cond(configs):
     show_img_per_epoch = 5.0
     # create vocoder
     vocoder = get_vocoder()
-
     for epoch in range(resume_epoch + 1, n_epochs + 1):
         model.eval()
         print('Synthesis...')
@@ -380,6 +341,7 @@ def get_vocoder():
     vocoder.remove_weight_norm()
     return vocoder
 
+
 if __name__ == "__main__":
     import argparse
     config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
@@ -398,7 +360,7 @@ if __name__ == "__main__":
         "-m", "--model_config", type=str,
         #required=True,
         help="path to model.yaml",
-        default=config_dir + "/model_gradTTS.yaml"
+        default=config_dir + "/model_gradTTS_v2.yaml"
     )
     parser.add_argument(
         "-t", "--train_config", type=str,

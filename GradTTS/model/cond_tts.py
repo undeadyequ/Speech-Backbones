@@ -88,11 +88,13 @@ class CondGradTTS(BaseModule):
                 guidence_strength=3.0
                 ):
         """
-        Generates mel-spectrogram from text. Returns:
+        Generates mel-spectrogram by encoder, decoder, from text. Returns:
             1. encoder outputs
             2. decoder outputs
             3. generated alignment
-        
+        Encoder: Given text, encoder text (mu_y) with duration prediction
+        Decoder: Given mu_y, spk, emo (emo style embedding), emo_label, denoising mel_spectrogram with time step loop
+
         Args:
             x (torch.Tensor): batch of texts, converted to a tensor with phoneme embedding ids.
             x_lengths (torch.Tensor): lengths of texts in batch.
@@ -154,7 +156,7 @@ class CondGradTTS(BaseModule):
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
 
-    @torch.no_grad()
+    #@torch.no_grad()
     def reverse_diffusion_interp(self,
                                  x,
                                  x_lengths,

@@ -133,30 +133,30 @@ class MultiAttention2(BaseModule):
             input_Q: (b, c, d_q, l_q)   c = dim_in_q
             key:    (b, d_k, l_k)       d_k = dim_in_k
             value:  (b, d_k, l_k)
-            attn_mask:
+            attn_mask: Mask attention score map for interpolation.
         Returns:
             out:  (b, c, d_q, l_q)
         """
         b, c, d_q, l_q = input_Q.shape
         d_k, l_k = key.shape[1], key.shape[2]
         # Change order of l_q and d_q for using mask
-        input_Q = input_Q.view(b, c, l_q, d_q)  # <- (l_q, d_q) or (d_q, l_q) ?? BE CAREFUL the order
+        input_Q = input_Q.view(b, c, l_q, d_q)  # <- BE CAREFUL the d_q, l_q order
 
         residual = input_Q.view(b, c, l_q * d_q).transpose(1, 2)  # (b, d_q * l_q, c)  ?? transpose works same as view ??
         Q = (
-            self.W_Q(input_Q).view(b, self.heads, -1, l_q, d_q)  # <- (l_q, d_q) or (d_q, l_q)
-        )  # IN: (b, c, d_q, l_q) -> (b, d_m * h, d_q, l_q) -> (b, h, d_m, d_q, l_q) # its good to seperate?
-        Q = Q.view(b, self.heads, self.att_dim,  l_q * d_q).transpose(2, 3) # -> (b, h, d_q * l_q, d_m)  <- att_dim = h * d_m
+            self.W_Q(input_Q).view(b, self.heads, -1, l_q, d_q)
+        )  #  (b, h, d_m, l_q, d_q)
+        Q = Q.view(b, self.heads, self.att_dim,  l_q * d_q).transpose(2, 3) # -> (b, h, d_q * l_q, d_m)
 
         K = (
             self.W_K(key.transpose(1, 2)).view(b, self.heads, l_k, -1)
-        )  # OUT: (b, h, l_k, d_m)  <- att_dim = h * d_m
+        )  # OUT: (b, h, l_k, d_m)
         V = (
             self.W_V(value.transpose(1, 2)).view(b, self.heads, l_k, -1)
         )  # OUT: (b, h, l_k, d_m)
         context, attn = ScaledDotProductionAttention()(Q, K, V, attn_mask, mask_value)   # (b, h, d_q * l_q, d_m)  attn: (b, h, l_q * d_q, l_k)
         context = torch.cat(
-            [context[:, i, :, :] for i in range(context.size(1))], dim=-1)   # (b, d_q * l_q, d_m * h)
+            [context[:, i, :, :] for i in range(context.size(1))], dim=-1)   # (b, d_q * l_q, d_m * h)  # why not use view
 
         output = self.to_out(context)    # -> (b, d_q * l_q, c)
         output = output + residual       # -> (b, d_q * l_q, c)  # There are 2 residual
@@ -178,6 +178,86 @@ class MultiAttention2(BaseModule):
         else:
             return output, attn
 
+class MultiAttention3(BaseModule):
+    def __init__(self, c_q, d_k, att_dim, heads=4, origin_c_q=64):
+        super(MultiAttention3, self).__init__()
+
+        self.heads = heads
+        self.att_dim = att_dim
+        self.c_q = c_q
+        self.d_k = d_k
+        self.d_q = int(80 / int(c_q / origin_c_q))
+
+        #hidden_dim = heads * att_dim
+        self.W_Q = torch.nn.Conv2d(c_q, att_dim * heads, 1, bias=False)
+        self.W_K = torch.nn.Linear(d_k, att_dim * heads * self.d_q)  #
+        self.W_V = torch.nn.Linear(d_k, att_dim * heads * self.d_q)
+
+        #self.W_K = torch.nn.Linear(d_k, att_dim * heads * self.d_q)  #
+        #self.W_V = torch.nn.Linear(d_k, att_dim * heads * self.d_q)
+
+        self.to_out = torch.nn.Linear(self.heads*self.att_dim, c_q)
+
+
+    def forward(self, input_Q, key=None, value=None, attn_mask=None, mask_value=0):
+        """
+
+        Args:
+            input_Q: (b, c, d_q, l_q)   c = dim_in_q
+            key:    (b, d_k, l_k)       d_k = d_k
+            value:  (b, d_k, l_k)
+            attn_mask: Mask attention score map for interpolation.
+        Returns:
+            out:  (b, c, d_q, l_q)
+
+        c = dim
+        d_q: h
+        att_dim: c
+        l_q: w
+        d_k: h1
+        l_k: w1
+        """
+        b, c, d_q, l_q = input_Q.shape
+        d_k, l_k = key.shape[1], key.shape[2]
+        # Change order of l_q and d_q for using mask
+        input_Q = input_Q.view(b, c, l_q, d_q)  # <- BE CAREFUL the d_q, l_q order
+
+        #residual = input_Q.view(b, c * d_q, l_q).transpose(1, 2)  # (b, d_q * l_q, c)  ?? transpose works same as view ??
+        # Dim(att) = target_frameN (or l_q) * ref_frameN (or l_k)
+        Q = (
+            self.W_Q(input_Q).view(b, self.heads, l_q, self.att_dim * d_q)
+        )
+        K = (
+            self.W_K(key.transpose(1, 2)).view(b, self.heads, l_k, self.att_dim * d_q)
+        )
+        V = (
+            self.W_V(value.transpose(1, 2)).view(b, self.heads, l_k, self.att_dim * d_q)
+        ) # The last dim of Q, K, V should be same
+        context, attn = ScaledDotProductionAttention()(Q, K, V, attn_mask, mask_value)   # (b, h, l_q, d_q * self.att_dim)  attn: (b, h, l_q, l_k)
+        #context = torch.cat(
+        #    [context[:, i, :, :] for i in range(context.size(1))], dim=-1)   # (b, d_q * l_q, d_m * h)  # why not use view
+        context = context.view(b, l_q, d_q, self.heads*self.att_dim)
+
+        output = self.to_out(context)    # -> (b, l_q, d_q, c)
+        resnet = input_Q.view(b, l_q, d_q, c)
+        output = output + resnet         # -> (b, l_q, d_q, c)  # There are 2 residual
+
+        if attn_mask is not None:        # Mask on output+1st residual
+            attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1)   # return this for mask on 2nd residual
+            output = output.masked_fill(attn_mask_nohead, mask_value)
+        else:
+            attn_mask_nohead = None
+        if output.get_device() == -1:
+            output = torch.nn.LayerNorm(c)(output)
+            output = output.view(b, c, l_q, d_q).transpose(2, 3)
+        else:
+            output = torch.nn.LayerNorm(c).cuda()(output)
+            output = output.view(b, c, l_q, d_q).transpose(2, 3)
+
+        if attn_mask_nohead is not None:
+            return output, attn, attn_mask_nohead
+        else:
+            return output, attn
 
 class ScaledDotProductionAttention(BaseModule):
     def __init__(self, dropout: float = None, scale: bool = True):

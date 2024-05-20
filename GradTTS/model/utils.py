@@ -169,7 +169,7 @@ def get_alignment(tier, sampling_rate=16000, hop_length=256):
 
 
 def extract_pitch(wav_f,
-                  wav_tg_f,
+                  wav_tg_f=None,
                   sampling_rate=16000,
                   hop_length=256,
                   need_trim=False
@@ -184,17 +184,21 @@ def extract_pitch(wav_f,
     Returns:
 
     """
-    # get start end
-    textgrid = tgt.io.read_textgrid(wav_tg_f)
-    phone, duration, start, end = get_alignment(
-        textgrid.get_tier_by_name("phones"),
-        sampling_rate,
-        hop_length
-    )
+
 
     # get trimed wav
     wav, fs = librosa.load(wav_f)
     if need_trim:
+        if wav_tg_f is not None:
+            # get start end
+            textgrid = tgt.io.read_textgrid(wav_tg_f)
+            phone, duration, start, end = get_alignment(
+                textgrid.get_tier_by_name("phones"),
+                sampling_rate,
+                hop_length
+            )
+        else:
+            raise IOError("wav_tg_f should not be none!")
         # trim by textgrid
         wav = wav[int(fs * start): int(fs * end)]
 
@@ -208,3 +212,22 @@ def extract_pitch(wav_f,
     f0 = pw.stonemask(wav, _f0, _time, fs)
 
     return f0
+
+
+class pitchExtracdtion:
+    def __init__(self):
+        pass
+
+    def extractPitch(self,
+                     wav_f,
+                     wav_tg_f,
+                     sampling_rate=16000,
+                     hop_length=256,
+                     need_trim=False):
+        extract_pitch(
+            wav_f,
+            wav_tg_f,
+            sampling_rate=sampling_rate,
+            hop_length=hop_length,
+            need_trim=need_trim
+        )

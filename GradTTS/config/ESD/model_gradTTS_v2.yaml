@@ -1,0 +1,34 @@
+encoder:
+  n_enc_channels: 128    # origin: 192
+  filter_channels: 128   # origin: 768
+  filter_channels_dp: 128  # origin: 256
+  n_enc_layers: 2
+  enc_kernel: 3
+  enc_dropout: 0.1
+  n_heads: 2
+  window_size: 4
+  length_scale: 1.0 # speech pace
+
+decoder:
+  sample_channel_n: 2  # LinearAttn: 3/4, CrossAttn: 1, CrossAttn_Classifier_free: 2/1
+  dec_dim: 64
+  beta_min: 0.05
+  beta_max: 20.0
+  pe_scale: 1000  # 1 for `grad-tts-old.pt` checkpoint
+  stoc: True
+  temperature: 1.0 # terminal variance
+  n_timesteps: 50
+
+unet:
+  unet_type: "origin"  # origin or diffuser
+  att_type: "cross"   # linear or crossAtt
+  att_dim: 64
+  heads: 4
+  p_uncond: 0.0    # 0 or 0.3
+  guidence_strength: 3
+
+spk_emb_dim: 64
+emo_emb_dim: 5
+
+mu: "txt_depend"         # txt_depend or norm
+solver: "sde"            # sde or ode

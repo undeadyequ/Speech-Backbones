@@ -100,7 +100,7 @@ class CondDiffusion(BaseModule):
                           guidence_strength=3.0
                           ):
         """
-        Denoise process, given z, mu and conditioned on emolabel, psd, spk
+        Given z, mu and conditioning (emolabel, psd, spk), denoise melspectrogram by ODE or SDE solver (stoc)
         mel_len = 100 for length consistence
         Args:
             z:      (b, 80, mel_len)
@@ -153,7 +153,7 @@ class CondDiffusion(BaseModule):
             xt = (xt - dxt) * mask
         return xt
 
-    @torch.no_grad()
+    #@torch.no_grad()
     def reverse_diffusion_interp_mod(
             self,
             z,
@@ -221,54 +221,55 @@ class CondDiffusion(BaseModule):
                     melstyle2 = melstyle1[:, :melstyle1.shape[1], :]
                 melstyle = melstyle1 * u + melstyle2 * (1 - u)
 
-                score_emo = self.estimator(
-                    x=xt,
-                    mask=mask,
-                    mu=mu,
-                    t=t,
-                    spk=spk,
-                    melstyle=melstyle,
-                    emo_label=emo_label,
-                    align_len=align_len,
-                    align_mtx=align_mtx,
-                    guidence_strength=guidence_strength
-                )
-            elif interp_type == "temp":
-                if i < int(mask_time_step):
-                    score_emo = self.estimator.forward_temp_interp(
-                        x=xt,
-                        mask=mask,
-                        mu=mu,
-                        t=t,
-                        spk=spk,
-                        melstyle1=melstyle1,
-                        emo_label1=emo_label1,
-                        melstyle2=melstyle2,
-                        emo_label2=emo_label2,
-                        align_len=align_len,
-                        align_mtx=align_mtx,
-                        mask_all_layer=mask_all_layer,
-                        temp_mask_value=temp_mask_value
-                    )
-                else:
+                with torch.no_grad():
                     score_emo = self.estimator(
                         x=xt,
                         mask=mask,
                         mu=mu,
                         t=t,
                         spk=spk,
-                        melstyle=melstyle1,
-                        emo_label=emo_label1,
+                        melstyle=melstyle,
+                        emo_label=emo_label,
                         align_len=align_len,
-                        align_mtx=align_mtx
+                        align_mtx=align_mtx,
+                        guidence_strength=guidence_strength
                     )
+            elif interp_type == "temp":
+                with torch.no_grad():
+                    if i < int(mask_time_step):
+                        score_emo = self.estimator.forward_temp_interp(
+                            x=xt,
+                            mask=mask,
+                            mu=mu,
+                            t=t,
+                            spk=spk,
+                            melstyle1=melstyle1,
+                            emo_label1=emo_label1,
+                            melstyle2=melstyle2,
+                            emo_label2=emo_label2,
+                            align_len=align_len,
+                            align_mtx=align_mtx,
+                            mask_all_layer=mask_all_layer,
+                            temp_mask_value=temp_mask_value
+                        )
+                    else:
+                        score_emo = self.estimator(
+                            x=xt,
+                            mask=mask,
+                            mu=mu,
+                            t=t,
+                            spk=spk,
+                            melstyle=melstyle1,
+                            emo_label=emo_label1,
+                            align_len=align_len,
+                            align_mtx=align_mtx
+                        )
             elif interp_type == "freq":
                 guid_scale = 0.1
-                tal1 = 0.6
-                tal2 = 0.8
+                tal_right = 0.8
+                tal_left = 0.6
                 alpha = 0.08
-
-                score_emo = self.estimator.forward_freq_interp(
+                score_emo, xt = self.estimator.forward_freq_interp(
                     x=xt,
                     mask=mask,
                     mu=mu,
@@ -283,8 +284,8 @@ class CondDiffusion(BaseModule):
                     align_len=align_len,
                     align_mtx=align_mtx,
                     guide_scale=guid_scale,
-                    tal1=tal1,
-                    tal2=tal2,
+                    tal_right=tal_right,
+                    tal_left=tal_left,
                     alpha=alpha,
                 )
             else:

@@ -10,7 +10,7 @@ from GradTTS.model.base import BaseModule
 from GradTTS.model.diffusion import *
 from GradTTS.model.utils import align
 import matplotlib.pyplot as plt
-
+from bisect import bisect
 
 class GradLogPEstimator2dCond(BaseModule):
     def __init__(self,
@@ -70,6 +70,7 @@ class GradLogPEstimator2dCond(BaseModule):
         # Enc_hid channel
         dims = [total_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
+        #print(in_out)
         self.downs = torch.nn.ModuleList([])
         self.ups = torch.nn.ModuleList([])
         num_resolutions = len(in_out)
@@ -80,14 +81,15 @@ class GradLogPEstimator2dCond(BaseModule):
             self.downs.append(torch.nn.ModuleList([
                 ResnetBlock(dim_in, dim_out, time_emb_dim=dim),
                 ResnetBlock(dim_out, dim_out, time_emb_dim=dim),
+                # MultiAttention3->frame2frame; MultiAttention2->bin2frame (simFrame2fame?)
                 Residual(Rezero(LinearAttention(dim_out) if att_type == "linear" else
-                                MultiAttention2(dim_out, self.enc_hid_dim, att_dim, heads))),  # Rezero is Not usefull ??  or MultiAttention
+                                MultiAttention3(dim_out, self.enc_hid_dim, att_dim, heads, dim))),
                 Downsample(dim_out) if not is_last else torch.nn.Identity()]))
 
         mid_dim = dims[-1]
         self.mid_block1 = ResnetBlock(mid_dim, mid_dim, time_emb_dim=dim)
         self.mid_attn = Residual(Rezero(LinearAttention(mid_dim) if att_type == "linear" else
-                                        MultiAttention2(mid_dim, self.enc_hid_dim, att_dim, heads)))
+                                        MultiAttention3(mid_dim, self.enc_hid_dim, att_dim, heads)))
         self.mid_block2 = ResnetBlock(mid_dim, mid_dim, time_emb_dim=dim)
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
@@ -95,7 +97,7 @@ class GradLogPEstimator2dCond(BaseModule):
                 ResnetBlock(dim_out * 2, dim_in, time_emb_dim=dim),
                 ResnetBlock(dim_in, dim_in, time_emb_dim=dim),
                 Residual(Rezero(LinearAttention(dim_in) if att_type == "linear" else
-                                MultiAttention2(dim_in, self.enc_hid_dim, att_dim, heads))),
+                            MultiAttention3(dim_in, self.enc_hid_dim, att_dim, heads, dim / 2 if is_last else dim))),
                 Upsample(dim_in)]))
         self.final_block = Block(dim, dim)
         self.final_conv = torch.nn.Conv2d(dim, 1, 1)
@@ -140,6 +142,7 @@ class GradLogPEstimator2dCond(BaseModule):
         x, hids = align_cond_input(x, mu, spk, melstyle, emo_label, align_len, align_mtx, self.att_type)
 
         # Joint training diff model with uncond/cond by p_uncondition
+        # ??2. Expected same result with different input makes training impossible.
         if self.training:
             p = torch.rand(1)
             if p < self.p_uncond:
@@ -262,6 +265,7 @@ class GradLogPEstimator2dCond(BaseModule):
         Returns:
             output: (b, 80, mel_len)
         """
+        #print("start estimator prediction!")
         # Regulize Unet input1: xt and enc_hids
         _, hids1 = align_cond_input(x, mu, spk, melstyle1, emo_label1, align_len, align_mtx, self.att_type)
         x, hids2 = align_cond_input(x, mu, spk, melstyle2, emo_label2, align_len, align_mtx, self.att_type)
@@ -283,12 +287,12 @@ class GradLogPEstimator2dCond(BaseModule):
             if i == 0 or mask_all_layer:  ## ?? good
                 b, _, d_q, l_q = x.shape
                 # generate 1st/2nd mask (e.g. mask left/right)
+                #print("up x shape: {}".format(x.shape))
                 temp_mask_left, temp_mask_right = create_left_right_mask(b, self.heads, d_q, l_q)
                 x_left, attn_map_left = attn(x, key=hids1, value=hids1, attn_mask=temp_mask_left,
                               mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
                 x_right, attn_map_right = attn(x, key=hids2, value=hids2, attn_mask=temp_mask_right,
                                mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
-                # combine sample
                 x = x_left + x_right
             else:
                 # only apply reference audio2 in other layers
@@ -319,6 +323,7 @@ class GradLogPEstimator2dCond(BaseModule):
             # compute temporal mask and get temporally interpolated x
             if i == 0 or mask_all_layer:
                 b, _, d_q, l_q = x.shape
+                #print("down x shape: {}".format(x.shape))
                 temp_mask_left, temp_mask_right = create_left_right_mask(b, self.heads, d_q, l_q)
                 x_left, attn_map_left = attn(x, key=hids1, value=hids1,
                                              attn_mask=temp_mask_right,
@@ -351,9 +356,9 @@ class GradLogPEstimator2dCond(BaseModule):
                             align_len=None,
                             align_mtx=None,
                             guide_scale=1.0,
-                            tal1=0.8,
-                            tal2=0.6,
-                            alpha=0.08
+                            tal_right=0.8,
+                            tal_left=0.6,
+                            alpha=0.08,
                             ):
         """
         Reference
@@ -378,88 +383,68 @@ class GradLogPEstimator2dCond(BaseModule):
         Returns:
 
         """
-        if t < tal1:
+        if t > tal_right:
+            print("Refer to reference1!")
             # get guid mask from melstyle or prosodic contours ?
             guid_mask = create_pitch_bin_mask(
                 pitch1,
                 melstyle1
             )  # (l_k1, 80)
             # train tunable noise
-            epoch = 2
-            for i in range(epoch):
-                x_guided = self.guide_sample(
-                    x,
-                    guid_mask,
-                    mask,
-                    mu,
-                    t,
-                    spk,
-                    melstyle1,
-                    emo_label1,
-                    align_len,
-                    align_mtx,
-                    guide_scale,
-                    alpha,
-                    guide_pitch=True
-                )
-            score = self.forward(
-                x_guided,
+            score, x_guided = self.guide_sample(
+                x,
+                guid_mask,
                 mask,
                 mu,
                 t,
                 spk,
-                psd=None,
-                melstyle=melstyle1,
-                emo_label=emo_label1,
-                align_len=align_len,
-                align_mtx=align_mtx)  # ?? Any problem ??
-        elif t >= tal1 and t < tal2:
+                melstyle1,
+                emo_label1,
+                align_len,
+                align_mtx,
+                guide_scale,
+                alpha,
+                guide_pitch=True
+            )
+            print("x and x_guided is equal?: {}".format(torch.equal(x, x_guided)))
+        elif t <= tal_right and t > tal_left:
+            print("Refer to reference2!")
             guid_mask = create_pitch_bin_mask(
                 pitch1,
                 melstyle1
             )  # (l_k1, 80)
             # train tunable noise
-            epoch = 2
-            for i in range(epoch):
-                x_guided = self.guide_sample(
+            score, x_guided = self.guide_sample(
+                x,
+                guid_mask,
+                mask,
+                mu,
+                t,
+                spk,
+                melstyle2,
+                emo_label2,
+                align_len,
+                align_mtx,
+                guide_scale,
+                alpha,
+                guide_pitch=False
+            )
+            print("x and x_guided is equal?: {}".format(torch.equal(x, x_guided)))
+        else:
+            with torch.no_grad():
+                score = self.forward(
                     x,
-                    guid_mask,
                     mask,
                     mu,
                     t,
                     spk,
-                    melstyle2,
-                    emo_label2,
-                    align_len,
-                    align_mtx,
-                    guide_scale,
-                    alpha,
-                    guide_pitch=False
-                )
-            score = self.forward(
-                x_guided,
-                mask,
-                mu,
-                t,
-                spk,
-                psd=None,
-                melstyle=melstyle2,
-                emo_label=emo_label2,
-                align_len=align_len,
-                align_mtx=align_mtx)  # ?? Any problem ??
-        else:
-            score = self.forward(
-                x,
-                mask,
-                mu,
-                t,
-                spk,
-                psd=None,
-                melstyle=melstyle2,
-                emo_label=emo_label2,
-                align_len=align_len,
-                align_mtx=align_mtx) # ?? Any problem ??
-        return score
+                    psd=None,
+                    melstyle=melstyle2,
+                    emo_label=emo_label2,
+                    align_len=align_len,
+                    align_mtx=align_mtx) # ?? Any problem ??
+                x_guided = x
+        return score, x_guided
 
     def guide_sample(
             self,
@@ -506,15 +491,15 @@ class GradLogPEstimator2dCond(BaseModule):
         optim = torch.optim.SGD([x_guided], lr=alpha)
         # set loss = attn_in_mask + attn_out_mask
         score_emo, attn_score = self.forward(x_guided,
-                                       mask,
-                                       mu,
-                                       t,
-                                       spk,
+                                       mask.detach(),
+                                       mu.detach(),
+                                       t.detach(),
+                                       spk.detach(),
                                        psd=None,
-                                       melstyle=melstyle,
-                                       emo_label=emo_label,
+                                       melstyle=melstyle.detach(),
+                                       emo_label=emo_label.detach(),
                                        align_len=align_len,
-                                       align_mtx=align_mtx,
+                                       align_mtx=align_mtx.detach(),
                                        return_attmap=True
                                        ) # ...,  (b, l_q * d_q<-80, l_k) ?
         # align guidmask to attn_score
@@ -536,14 +521,14 @@ class GradLogPEstimator2dCond(BaseModule):
             loss += -attn_score[guid_mask == 0].sum()
             loss += guide_scale * attn_score[guid_mask == 1].sum()
         #loss.requires_grad = True
-        loss.backward()
+        loss.backward(retain_graph=False)
+        print("loss.{}".format(loss))
 
         # get x_guided updated
         optim.step()
-
         # get x_guided_score = unet(x_guided)
-
-        return x_guided
+        x_guided = x_guided.detach()
+        return score_emo, x_guided
 
 
 def create_left_right_mask(b, heads, d_q, l_q, device="cuda"):
@@ -560,26 +545,90 @@ def create_left_right_mask(b, heads, d_q, l_q, device="cuda"):
     return temp_mask_left, temp_mask_right
 
 
-def create_left_right_mask_score(b, heads, d_q, l_q, device="cuda"):
-    if device == "cuda":
-        temp_mask_left = torch.zeros((b, heads, d_q * l_q, 1)).cuda()
-        temp_mask_right = torch.zeros((b, heads, d_q * l_q, 1)).cuda()
+def create_utter_word_mask_freq(b, heads, d_q, l_q, emb_n,
+                                ref_start, ref_end, target_start, target_end):
+    """
+    Create masks for utterance-level and word-level style transfering.
+    """
+    # create utter mask
+    temp_mask_utter = torch.ones((b, heads, d_q * l_q, emb_n)).cuda()
+    temp_mask_utter[:, :, target_start:target_end, :] = 0
+
+    # create word mask
+    temp_mask_word = torch.zeros((b, heads, d_q * l_q, emb_n)).cuda()
+    temp_mask_word[:, :, target_start:target_end, ref_start:ref_end] = 1
+    return temp_mask_utter, temp_mask_word
+
+
+def create_low_high_mask_freq(b, heads, d_q, l_q,
+                              freq_splitter="pitch"):
+    """
+    low high frequency mask
+    """
+
+    if freq_splitter == "pitch":
+        split_mel_bin = change_freq_to_melbins(pitch_range[1])
+    elif freq_splitter == "formant12":
+        split_mel_bin = change_freq_to_melbins(f12_range[1])
     else:
-        temp_mask_left = torch.zeros((b, heads, d_q * l_q, 1))
-        temp_mask_right = torch.zeros((b, heads, d_q * l_q, 1))
+        split_mel_bin = 0
+        IOError("freq_splitter should be pitch or formant12")
 
-    temp_left_score = torch.linspace(0, 1, steps=d_q * int(l_q * 0.5)).unsqueeze(0).transpose(0, 1)
-    temp_right_score = torch.linspace(0, 1, steps=d_q * l_q - d_q * int(l_q * 0.5)).unsqueeze(0).transpose(0, 1)
+    mask_low_freq = torch.zeros((b, heads, d_q * l_q, 1)).cuda()
+    for i in l_q:
+        mask_low_freq[:, :, i * d_q:i * ( d_q + split_mel_bin), :] = 1
+    mask_high_freq = 1 - mask_low_freq
+    return mask_low_freq, mask_high_freq
 
-    temp_left_score = temp_left_score.repeat(b, heads, 1, 1)
-    temp_right_score = temp_right_score.repeat(b, heads, 1, 1)
+def align_cond_input(x, mu, spk, melstyle, emo_label, align_len, align_mtx, att_type):
+    if align_len is not None:
+        spk_align = align(spk, align_len, condtype="noseq")
+        emo_label_align = align(emo_label, align_len, condtype="noseq")
+        if align_mtx is not None:     # Only for inference
+            melstyle = align(melstyle, align_len, align_mtx, condtype="seq")
+    # Concatenate condition by different attention
+    if att_type == "linear":
+        x = torch.stack([x, mu, spk_align, emo_label_align, melstyle], 1)
+        hids = None
+    elif att_type == "cross":
+        # In order to make the dim of channel (3) * 80 same as hids (240) for classifier-free guidance
+        # ??1. Expected samiliar result with different input makes training difficult.
+        x = torch.stack([x, mu, mu], 1)
+        #x = torch.stack([x, mu], 1)
 
-    temp_mask_left[:, :, :d_q * int(l_q * 0.5), :] = temp_left_score
-    temp_mask_right[:, :, d_q * int(l_q * 0.5):, :] = temp_right_score
-    return temp_mask_left, temp_mask_right
+        hids = torch.concat([spk_align, melstyle, emo_label_align], dim=1)
+        # hids = torch.stack([spk_align, melstyle, emo_label_align], dim=1)
+    else:
+        print("bad att type!")
+    return x, hids
 
 
+
+# https://iopscience.iop.org/article/10.1088/1742-6596/1153/1/012008/pdf
+# freq_splitter = "pitch"
+pitich_range_male = (100, 150)
+pitch_range_female = (200, 250)
+pitch_range = (90, 255)
+non_pitch_range = (255, 5500)
+
+# freq_splitter = "formant12"
+f1_range = (650, 950)
+f2_range = (1300, 1500)
+f12_range = (650, 1500)
+
+f3_range = (2500, 4000)
+f4_range = (4500, 5500)  # not for sure
+f34_range = (1500, 5500)
+
+def change_freq_to_melbins(search_freq):
+    freq_bins = librosa.mel_frequencies(n_mels=80)
+    return bisect(freq_bins, search_freq)
+
+
+
+# ------------------------- NOT USED-----------------------------
 def create_left_right_mask_temp(b, heads, d_q, l_q):
+    """
     left_mask_list = []
     right_mask_list = []
     for s in range(int(l_q * 0.5)):
@@ -591,6 +640,7 @@ def create_left_right_mask_temp(b, heads, d_q, l_q):
 
     left_mask_torch = torch.sort(torch.concat(left_mask_list, dim=1)).unsqueeze(-1)
     right_mask_list = torch.sort(torch.concat(right_mask_list, dim=1)).unsqueeze(-1)
+    """
 
     temp_mask_left = torch.ones((b, heads, d_q * l_q, 1)).cuda()
     temp_mask_right = torch.ones((b, heads, d_q * l_q, 1)).cuda()
@@ -599,28 +649,6 @@ def create_left_right_mask_temp(b, heads, d_q, l_q):
     temp_mask_right[:, :, d_q * int(l_q * 0.5):, :] = 0
     temp_mask_right = temp_mask_right > 0
     return temp_mask_left, temp_mask_right
-
-
-def align_cond_input(x, mu, spk, melstyle, emo_label, align_len, align_mtx, att_type):
-    if align_len is not None:
-        spk_align = align(spk, align_len, condtype="noseq")
-        emo_label_align = align(emo_label, align_len, condtype="noseq")
-        if align_mtx is not None:     # Only for inference
-            melstyle = align(melstyle, align_len, align_mtx, condtype="seq")
-    # Concatenate condition by different attention
-    if att_type == "linear":
-        x = torch.stack([x, mu, spk_align, emo_label_align], 1)
-        hids = None
-    elif att_type == "cross":
-        # In order to make the dim of channel (3) * 80 same as hids (240) for classifier-free guidance
-        x = torch.stack([x, mu, mu], 1)
-        #x = torch.stack([x, mu], 1)
-        hids = torch.concat([spk_align, melstyle, emo_label_align], dim=1)
-        # hids = torch.stack([spk_align, melstyle, emo_label_align], dim=1)
-    else:
-        print("bad att type!")
-    return x, hids
-
 
 def create_pitch_bin_mask(wav_f,
                           mel_spectrogram,
@@ -677,3 +705,22 @@ def create_pitch_bin_mask(wav_f,
         if fr_mel_bin != 0:  # Only for pitch existed!
             pitch_bin_mask[fr_th, fr_mel_bin] = 1
     return pitch_bin_mask
+
+
+def create_left_right_mask_score(b, heads, d_q, l_q, device="cuda"):
+    if device == "cuda":
+        temp_mask_left = torch.zeros((b, heads, d_q * l_q, 1)).cuda()
+        temp_mask_right = torch.zeros((b, heads, d_q * l_q, 1)).cuda()
+    else:
+        temp_mask_left = torch.zeros((b, heads, d_q * l_q, 1))
+        temp_mask_right = torch.zeros((b, heads, d_q * l_q, 1))
+
+    temp_left_score = torch.linspace(0, 1, steps=d_q * int(l_q * 0.5)).unsqueeze(0).transpose(0, 1)
+    temp_right_score = torch.linspace(0, 1, steps=d_q * l_q - d_q * int(l_q * 0.5)).unsqueeze(0).transpose(0, 1)
+
+    temp_left_score = temp_left_score.repeat(b, heads, 1, 1)
+    temp_right_score = temp_right_score.repeat(b, heads, 1, 1)
+
+    temp_mask_left[:, :, :d_q * int(l_q * 0.5), :] = temp_left_score
+    temp_mask_right[:, :, d_q * int(l_q * 0.5):, :] = temp_right_score
+    return temp_mask_left, temp_mask_right

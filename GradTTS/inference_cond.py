@@ -16,7 +16,6 @@ from scipy.io.wavfile import write
 
 import torch
 
-import params
 from model import GradTTS, CondGradTTS
 from text import text_to_sequence, cmudict
 from text.symbols import symbols
@@ -35,8 +34,8 @@ import yaml
 #HIFIGAN_CONFIG = './checkpts/config.json'
 #HIFIGAN_CHECKPT = './checkpts/generator_v3'
 
-HIFIGAN_CONFIG = './checkpts/hifigan-config.json' # ./checkpts/config.json
-HIFIGAN_CHECKPT = './checkpts/hifigan.pt'
+HIFIGAN_CONFIG = '/home/rosen/Project/Speech-Backbones/GradTTS/hifi-gan/checkpts/hifigan-config.json' # ./checkpts/config.json
+HIFIGAN_CHECKPT = '/home/rosen/Project/Speech-Backbones/GradTTS/checkpts/hifigan.pt'
 
 
 
@@ -238,53 +237,55 @@ def inference_interp(
 
     with open(syn_txt, 'r', encoding='utf-8') as f:
         texts = [line.strip() for line in f.readlines()]
-    cmu = cmudict.CMUDict('./resources/cmu_dictionary')
+    cmu = cmudict.CMUDict('/home/rosen/Project/Speech-Backbones/GradTTS/resources/cmu_dictionary')
 
-    with torch.no_grad():
-        for i, text in enumerate(texts):
-            print(f'Synthesizing {i} text...', end=' ')
-            x = torch.LongTensor(intersperse(text_to_sequence(text, dictionary=cmu), len(symbols))).cuda()[None]
-            x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
+    #with torch.no_grad():
+    for i, text in enumerate(texts):
+        print(f'Synthesizing {i} text...', end=' ')
+        x = torch.LongTensor(intersperse(text_to_sequence(text, dictionary=cmu), len(symbols))).cuda()[None]
+        x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
 
-            t = dt.datetime.now()
-            if model_name == "gradtts_lm":
-                y_enc, y_dec, attn = generator.forward(x,
-                                                       x_lengths,
-                                                       n_timesteps=time_steps,
-                                                       temperature=1.5,
-                                                       stoc=True,
-                                                       spk=spk,
-                                                       length_scale=0.91,
-                                                       emo_label=emo_label1,
-                                                       #ref_speech=None,
-                                                       melstyle=melstyle1,
-                                                       )
-                y_dec = y_dec.transpose(1, 2)
-            elif model_name == "gradtts_cross":
-                y_enc, y_dec, attn = generator.reverse_diffusion_interp(
-                    x,
-                    x_lengths,
-                    n_timesteps=time_steps,
-                    temperature=1.5,
-                    stoc=True,
-                    length_scale=0.91,
-                    spk=spk,
-                    emo_label1=emo_label1,
-                    melstyle1=melstyle1,
-                    pitch1=pitch1,
-                    emo_label2=emo_label2,
-                    melstyle2=melstyle2,
-                    pitch2=pitch2,
-                    interp_type=interp_type,
-                    mask_time_step=mask_time_step,
-                    mask_all_layer=mask_all_layer,
-                    temp_mask_value=temp_mask_value,
-                    guidence_strength=guidence_strength
-                )
-            t = (dt.datetime.now() - t).total_seconds()
-            print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
-            audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
-            write(f'{out_dir}/sample_{i}.wav', 22050, audio)
+        t = dt.datetime.now()
+        if model_name == "gradtts_lm":
+            y_enc, y_dec, attn = generator.forward(x,
+                                                   x_lengths,
+                                                   n_timesteps=time_steps,
+                                                   temperature=1.5,
+                                                   stoc=True,
+                                                   spk=spk,
+                                                   length_scale=0.91,
+                                                   emo_label=emo_label1,
+                                                   #ref_speech=None,
+                                                   melstyle=melstyle1,
+                                                   )
+            y_dec = y_dec.transpose(1, 2)
+        elif model_name == "gradtts_cross":
+            y_enc, y_dec, attn = generator.reverse_diffusion_interp(
+                x,
+                x_lengths,
+                n_timesteps=time_steps,
+                temperature=1.5,
+                stoc=True,
+                length_scale=0.91,
+                spk=spk,
+                emo_label1=emo_label1,
+                melstyle1=melstyle1,
+                pitch1=pitch1,
+                emo_label2=emo_label2,
+                melstyle2=melstyle2,
+                pitch2=pitch2,
+                interp_type=interp_type,
+                mask_time_step=mask_time_step,
+                mask_all_layer=mask_all_layer,
+                temp_mask_value=temp_mask_value,
+                guidence_strength=guidence_strength
+            )
+        t = (dt.datetime.now() - t).total_seconds()
+        print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
+        #y_dec = y_dec.numpy()
+        #audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
+        audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).detach().numpy() * 32768).astype(np.int16)
+        write(f'{out_dir}/sample_{i}.wav', 22050, audio)
     print('Done. Check out `out` folder for samples.')
 
 
@@ -330,7 +331,7 @@ if __name__ == '__main__':
 
     logs_dir_par = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
     #logs_dir = logs_dir_par + "gradtts_crossSelf_v2/"
-    logs_dir = logs_dir_par + "gradtts_crossSelf_puncond_n1_neworder_fixmask/"
+    logs_dir = logs_dir_par + "interpEmoTTS_frame2frameAttn/"
 
     config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
     melstyle_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/emo_reps"
@@ -340,14 +341,14 @@ if __name__ == '__main__':
 
     ## INPUT
     ### General
-    checkpoint = "grad_54.pt"
+    checkpoint = "grad_65.pt"
     chk_pt = logs_dir + checkpoint
     syn_txt = "resources/filelists/synthesis1.txt"
     time_steps = 100
     model_name = "gradtts_cross"
-
     speaker_id = 15
     spk_tensor = torch.LongTensor([speaker_id]).cuda() if not isinstance(speaker_id, type(None)) else None
+
     ### Style
     emo_label = "Angry"
     emo_label_tensor = torch.LongTensor(get_emo_label(emo_label)).cuda()
@@ -360,7 +361,7 @@ if __name__ == '__main__':
         open(config_dir + "/preprocess_gradTTS.yaml", "r"), Loader=yaml.FullLoader
     )
     model_config = yaml.load(open(
-        config_dir + "/model_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
+        config_dir + "/model_gradTTS_v2.yaml", "r"), Loader=yaml.FullLoader)
     train_config = yaml.load(open(
         config_dir + "/train_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
     configs = (preprocess_config, model_config, train_config)
@@ -390,11 +391,11 @@ if __name__ == '__main__':
     NO_INTERPOLATION = False
     INTERPOLATE_INFERENCE_SIMP = False
     # Temp
-    INTERPOLATE_INFERENCE_TEMP = False  # synthesize
+    INTERPOLATE_INFERENCE_TEMP = True  # synthesize
     INTERPOLATE_INFERENCE_TEMP_EMO_DETECT = False # evaluation emoTempInterp
 
     # Freq
-    INTERPOLATE_INFERENCE_FREQ = True   # synthesize
+    INTERPOLATE_INFERENCE_FREQ = False   # synthesize
     INTERPOLATE_INFERENCE_FREQ_PSD_MATCH = False  # evaluation emoFreqInterp
 
     # inference without interpolation
@@ -480,7 +481,7 @@ if __name__ == '__main__':
         else:
             mask_range_tag = "maskFirstLayers"
         out_dir = (f"{logs_dir}chpt{chpt_n}_time{time_steps}_interp{interp_type}_spk{speaker_id}_{emo_label1}_"
-                   f"{emo_label2}_{mask_range_tag}_timeSplit_{guidence_strength}_test")
+                   f"{emo_label2}_{mask_range_tag}_timeSplit_{guidence_strength}")
         if not os.path.isdir(out_dir):
             Path(out_dir).mkdir(exist_ok=True)
 
