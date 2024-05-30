@@ -55,7 +55,11 @@ You can also perform *interactive inference* by running Jupyter Notebook `infere
 
 1. Make filelists of your audio data like ones included into `resources/filelists` folder. For single speaker training refer to `jspeech` filelists and to `libri-tts` filelists for multispeaker.
 2. Set experiment configuration in `params.py` file.
-3. Specify your GPU device and run training script:
+3. Specify your GPU device and run training script
+   - The parameters that should be changed
+   - model_config: temparature, length_scale, guidence_strength
+   - train_config: batchm resume
+    
     ```bash
     export CUDA_VISIBLE_DEVICES=YOUR_GPU_ID
     python train.py  # if single speaker

@@ -5,7 +5,7 @@ path:
   result_path: "./output/result/ESD"
 # train
 n_epochs: 1000
-resume_epoch: 0
+resume_epoch: 68  # 116 for linear, 65 for .._nojoint
 batch_size: 48
 learning_rate: 1e-4
 seed: 37

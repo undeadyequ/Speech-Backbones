@@ -30,64 +30,39 @@ from visualization import show_psd, show_mel
 from GradTTS.exp.util import get_pitch_match_score
 import librosa
 import numpy as np
+from syn_eval_data import synthesize_by_tempInterp, synthesize_by_noInterp
+
+from GradTTS.const_param import emo_num_dict, emo_melstyle_dict1, emo_melstyle_dict, psd_dict, wav_dict
+from GradTTS.const_param import logs_dir_par, logs_dir, config_dir, melstyle_dir, psd_dir, wav_dir
+from GradTTS.const_param import label2id_SER
+
 
 # Referance speech
-## FreqInterp
-emo_num_dict = {
-    "Angry": 0,
-    "Surprise": 1,
-    "Sad": 2,
-    "Neutral": 3,
-    "Happy": 4
-}
-## SER dataset
-label2id_SER = {
-    "angry": 0,
-    "calm": 3,
-    "disgust": 0,
-    "fearful": 5,
-    "happy": 4,
-    "neutral": 3,
-    "sad": 2,
-    "surprised": 1
-}
-
-emo_melstyle_dict = {
-    "Angry": "0019_000401.npy",
-    "Surprise": "0019_001451.npy",
-    "Sad": "0019_001101.npy",
-    "Neutral": "0019_000051.npy",
-    "Happy": "0019_000751.npy"
-}
-
 ## FreqInterp
 pitch_noPitch_dict = {
     "pitch_ref": [("Angry", "spk_id", ".npy"), ("Angry", "spk_id", ".npy")],
     "noPitch_ref": [("Angry", "spk_id", ".npy"), ("Angry", "spk_id", ".npy")]
 }
-f4_noF4_dict = {
-
-}
 
 """
 subdir/files in *_base_dir
-
 """
+
 eval_gradtts_base_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
 eval_fastspeech_base_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
 eval_emodiff_base_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
 
 eval_model_base_dir = {
-    "interpTTS": eval_gradtts_base_dir + "gradtts_crossSelf_puncond_n1_neworder_fixmask",
+    #"interpTTS": eval_gradtts_base_dir + "interpEmoTTS_frame2frameAttn_noJoint",
+    "interpTTS": eval_gradtts_base_dir + "interpEmoTTS_linearAttn",
+    #"interpTTS": eval_gradtts_base_dir + "gradtts_crossSelf_puncond_n1_neworder_fixmask",
     "emodiff": eval_emodiff_base_dir + "",
-    "fastspeech": eval_fastspeech_base_dir + ""
-}
+    "fastspeech": eval_fastspeech_base_dir + ""}
 
 case_study_example_temp = {
     "ang_sad": "",
     "sad_hap": "",
-    "ang_hap": ""
-}
+    "ang_hap": ""}
 
 
 def combineStyleToken(token1, token2):
@@ -105,66 +80,50 @@ def combinePSD(psd1, psd2):
     return psd12
 
 
-def combineStyle(combineType="style_token", style1="", style2="", fastspeech=None):
-    """
-    
-    Args:
-        combineType (): 
-            style_token:
-            mel:
-            psd:
+model_yaml = {
+    "crossAttn_f2f_nonJoint": "model_gradTTS_v2",
+    "crossAttn_f2f": "model_gradTTS",
+    "crossAttn_f2b": "",  # Change to Multihead2
+    "linearAttn": "model_gradTTS_linear"
+}
 
-    Returns:
-
-    """
-    if combineType == "style_token" or combineType == "psd":
-        if fastspeech == None:
-            raise IOError("Please input fastpseech model")
-
-    if combineType == "style_token":
-        gst_token1, _ = fastspeech(style1)
-        gst_token2, _ = fastspeech(style2)
-        gst_token12 = combineStyleToken(gst_token1, gst_token2)
-        return gst_token12
-    elif combineType == "mel":
-        combineMel(style1, style2)
-    elif combineType == "psd":
-        _, psd1 = fastspeech(style1)
-        gst_token2, _ = fastspeech(style2)
-        gst_token12 = combineStyleToken(gst_token1, gst_token2)
-        return gst_token12()
-
-
-def get_configs(model_name, logs_dir):
+def get_interpTTS_infer_config(logs_dir, infer_type="interp", sub_model_type="crossAttn_f2f_nonJoint"):
     """
     Get model-related configs
     """
-    if model_name == "interpTTS":
-        config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
-        preprocess_config = yaml.load(
-            open(config_dir + "/preprocess_gradTTS.yaml", "r"), Loader=yaml.FullLoader
-        )
-        model_config = yaml.load(open(
-            config_dir + "/model_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
-        train_config = yaml.load(open(
-            config_dir + "/train_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
-        configs = (preprocess_config, model_config, train_config)
-        model_name = "gradtts_cross"
+    config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
+    preprocess_config = yaml.load(
+        open(config_dir + "/preprocess_gradTTS.yaml", "r"), Loader=yaml.FullLoader
+    )
+    model_config = yaml.load(open(
+        config_dir + "/{}.yaml".format(model_yaml[sub_model_type]), "r"), Loader=yaml.FullLoader)
+    train_config = yaml.load(open(
+        config_dir + "/train_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
+    configs = (preprocess_config, model_config, train_config)
+    estimator_name = "gradtts_cross"
 
-        checkpoint = "/grad_54.pt"
-        chk_pt = logs_dir + checkpoint
-        syn_txt = "../resources/filelists/synthesis3.txt"
-        time_steps = 100
-        speaker_id = 19
-        spk_tensor = torch.LongTensor([speaker_id]).cuda() if not isinstance(speaker_id, type(None)) else None
+    # ckpt version
+    checkpoint = "/models/grad_118.pt"   # grad_54.pt
+    chk_pt = logs_dir + checkpoint
 
+    # text
+    syn_txt = "../resources/filelists/synthesis1.txt"
 
-        interp_type = "temp"
-        mask_time_step = int(time_steps / 1.0)
-        mask_all_layer = True
-        temp_mask_value = 0
-        guidence_strength = 3.0
+    # inference related
+    time_steps = 50
+    guidence_strength = 3.0
 
+    # spk related
+    speaker_id = 19
+    spk_tensor = torch.LongTensor([speaker_id]).cuda() if not isinstance(speaker_id, type(None)) else None
+
+    # interpolated related
+    interp_type = "temp"
+    mask_time_step = int(time_steps / 1.0)
+    mask_all_layer = True
+    temp_mask_value = 0
+
+    if infer_type == "interp":
         kwargs = {
             "syn_txt": syn_txt,
             "time_steps": time_steps,
@@ -175,12 +134,78 @@ def get_configs(model_name, logs_dir):
             "temp_mask_value": temp_mask_value,
             "guidence_strength": guidence_strength
         }
+    else:
+        kwargs = {
+            "syn_txt": syn_txt,
+            "time_steps": time_steps,
+            "spk": spk_tensor,
+            "guidence_strength": guidence_strength
+        }
+    return configs, estimator_name, chk_pt, kwargs
 
-        return configs, model_name, chk_pt, kwargs
-    elif model_name == "":
-        return ""
-    elif model_name == "":
-        return ""
+def get_emoDiff_infer_config():
+    pass
+
+
+class Non_interp_eval():
+    def __init__(self,
+                 emos=("Angry", "Happy", "Sad"),
+                 syn_models=("interpTTS", "emodiff", "fastspeech"),
+                 need_syn=False,
+                 sub_model_type="linearAttn"
+                 ):
+        configs, estimator_name, chk_pt, kwargs = get_interpTTS_infer_config(
+            eval_model_base_dir["interpTTS"],
+            infer_type="nonInterp",
+            sub_model_type=sub_model_type
+        )
+        if "interpTTS" in syn_models:
+            if need_syn:
+                synthesize_by_noInterp(
+                    emos=emos,
+                    syn_models=syn_models,
+                    eval_dir=eval_model_base_dir["interpTTS"],
+                    emo_melstyle_dict=emo_melstyle_dict1,
+                    configs=configs,
+                    estimator_name=estimator_name,
+                    chk_pt=chk_pt,
+                    kwargs=kwargs
+                )
+
+    def eval_by_mcd(self,
+                    syn_models = ("modelA")
+                    ):
+        mcd_dict = dict() # {"modelA": [()]}
+        if "interpTTS" in syn_models:
+            mcd_interpTTS_dict = evaluate_mcd_result(self.interpTemp_dir)  # {"ang": [1.2, 2.3], "hap": [2.3, ...]}
+        elif "gradTTS" in syn_models:
+            gradTTS_dir = ""
+            mcd_gradTTS_dict = evaluate_mcd_result(gradTTS_dir)
+        return mcd_dict
+
+    def eval_mos(self,
+                 punda=(0.2, 0.8),
+                 weight=(0.3, 0.7)
+                 ):
+        """read mos result to dict"""
+        mos_dict = dict()
+        for p in punda:
+            for w in weight:
+                pass
+
+    # generate evaluation data for mos
+    # generate evaluation data for smos
+    def eval_smos(self):
+        """read smos result to dict"""
+        pass
+
+    def eval_emoPref(self, punda=(0.2, 0.8), weight=(0.3, 0.7)):
+        """???"""
+        for p in punda:
+            for w in weight:
+                pass
+
+    # Visualization
 
 
 class InterpEval:
@@ -201,192 +226,55 @@ class InterpEval:
         self.eval_emodiff_dir = eval_model_base_dir["emodiff"]
         self.eval_fastsph_dir = eval_model_base_dir["fastspeech"]
 
-    def synthesize_by_freInterp(self,
-                                freq_area="pitch",
-                                syn_models=("interpTTS", "emodiff", "fastspeech")
-                                ):
-        for model_name in syn_models:
-            if model_name == "interpTTS":
-                # Model-related configs
-                config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
-                preprocess_config = yaml.load(
-                    open(config_dir + "/preprocess_gradTTS.yaml", "r"), Loader=yaml.FullLoader
-                )
-                model_config = yaml.load(open(
-                    config_dir + "/model_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
-                train_config = yaml.load(open(
-                    config_dir + "/train_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
-                configs = (preprocess_config, model_config, train_config)
-
-                ## Model version
-                checkpoint = "grad_54.pt"
-                chk_pt = self.exp_dir + checkpoint
-
-                ## Model hyper
-                time_steps = 100
-                mask_time_step = int(time_steps / 1.0)
-                mask_all_layer = True
-                guidence_strength = 3.0   # classifer-guidence strength
-                chpt_n = checkpoint.split(".")[0].split("_")[1]
-
-                # output
-                out_dir = f"{self.exp_dir}freq_eval/interpTTS"
-                if not os.path.isdir(out_dir):
-                    Path(out_dir).mkdir(exist_ok=True)
-
-                # style-related configs (from dictionary of specific emotions)
-                if freq_area == "pitch":
-                    ref1_list = pitch_noPitch_dict["pitch_ref"]
-                    ref2_list = pitch_noPitch_dict["noPitch_ref"]
-                    syn_txt = "resources/filelists/synthesis1.txt"
-                    for ref1, ref2 in zip(ref1_list, ref2_list):
-                        emo1, spk1, mel1, audio1 = ref1
-                        emo2, spk2, mel2, audio2 = ref2
-                        assert spk1 == spk2   # ?? should be same ??
-                        inference_interp(
-                            configs,
-                            "gradtts_cross",
-                            chk_pt,
-                            syn_txt=syn_txt,
-                            time_steps=time_steps,
-                            spk=spk1,
-                            emo_label1=emo1,
-                            melstyle1=mel1,
-                            pitch1=audio1,
-                            emo_label2=emo2,
-                            melstyle2=mel2,
-                            pitch2=audio2,
-                            out_dir=out_dir,
-                            interp_type="freq",
-                            mask_time_step=mask_time_step,
-                            mask_all_layer=mask_all_layer,
-                            guidence_strength=guidence_strength
-                        )
-                elif model_name == "emodiff":
-                    out_dir = f"{self.exp_dir}freq_eval/emodiff" # outdir/sample{i}.wav
-                    pass
-                elif model_name == "fastspeech":
-                    out_dir = f"{self.exp_dir}freq_eval/fastspeech" # outdir/sample{i}.wav
-                    pass
-                else:
-                    print("please choose model from emodiff, fastspeech, or interptts")
-    def synthesize_by_tempInterp(self,
-                                 paired_emos=("Angry_Sad", "Sad_Happy", "Angry_Happy"),
-                                 syn_models=("interpTTS", "emodiff", "fastspeech")
-                                 ):
-        """
-        Synthesize tempInterp into subdir like:
-            dir
-                ang_sad
-                    1.wav
-                    2.wav
-                    ...
-                sad_hap
-        Args:
-            paired_emos:
-            syn_models:
-
-        Returns:
-
-        """
-        melstyle_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/emo_reps"
-
-        for model_name in syn_models:
-            if model_name == "interpTTS":
-                # model-related configs
-                configs, estimator_name, chk_pt, kwargs = get_configs(model_name, logs_dir=self.eval_interp_dir)
-
-                for pr_emos in paired_emos:
-                    # style-related configs (from dictionary of specific emotions)
-                    emo1, emo2 = pr_emos.split("_")
-                    emo_label1 = torch.LongTensor(get_emo_label(emo1)).cuda()
-                    emo_label2 = torch.LongTensor(get_emo_label(emo2)).cuda()
-                    melstyle1 = (torch.from_numpy(np.load(melstyle_dir + "/" + emo_melstyle_dict[emo1])).
-                                 unsqueeze(0).transpose(1, 2).cuda())
-                    melstyle2 = (torch.from_numpy(np.load(melstyle_dir + "/" + emo_melstyle_dict[emo2])).
-                                 unsqueeze(0).transpose(1, 2).cuda())
-
-                    # create subdir
-                    out_sub_dir = self.interpTemp_dir + f"/{pr_emos}"
-                    if not os.path.isdir(out_sub_dir):
-                        Path(out_sub_dir).mkdir(exist_ok=True, parents=True)
-
-                    inference_interp(
-                        configs,
-                        estimator_name,
-                        chk_pt,
-                        emo_label1=emo_label1,
-                        melstyle1=melstyle1,
-                        emo_label2=emo_label2,
-                        melstyle2=melstyle2,
-                        out_dir=out_sub_dir,
-                        **kwargs,
-                    )
-
-            elif model_name == "emodiff":
-                # model-related configs
-                model_config, kwargs = get_configs(model_name)
-                for pr_emos in self.paired_emos:
-                    # style-related configs
-                    emo1, emo2 = pr_emos.split("_")
-                    inference_emodiff_interp(
-                        model_config,
-                        **kwargs,
-                        emo1=emo1,
-                        emo2=emo2
-                    )
-
-            elif model_name == "fastspeech":
-                # model-related configs
-                for pr_emos in self.paired_emos:
-                    # style-related configs
-                    emo1, emo2 = pr_emos.split("_")
-                    style12 = combineStyle(
-                        combineType="mel",
-                        style1=emo_melstyle_dict[emo1],
-                        style2=emo_melstyle_dict[emo1]
-                    )
-                    inference_fastspeech(
-                        style=style12
-                    )
-            else:
-                print("please choose model from emodiff, fastspeech, or interptts")
-
     def eval_by_SER(self,
                     paired_emos=("Angry_Sad", "Sad_Hap", "Angry_Happy"),
                     syn_models=("interpTTS", "emodiff", "fastspeech"),
-                    need_syn=False,
-                    syn_dir=None
+                    need_syn=False
                     ):
         """
         detect 1st/2nd half emotion by SER
         Returns:
-
         """
-        result = {}
+        configs, estimator_name, chk_pt, kwargs = get_interpTTS_infer_config(
+            eval_model_base_dir["interpTTS"])
+
+        result = dict()  # {"modelA": {"emo1_emo2": [emo1_acc, emo2_acc],}}
         if "interpTTS" in syn_models:
             if need_syn:
-                self.synthesize_by_tempInterp(
+                synthesize_by_tempInterp(
                     paired_emos=paired_emos,
-                    syn_models=syn_models
+                    syn_models=syn_models,
+                    eval_interp_dir=eval_model_base_dir["interpTTS"],
+                    configs=configs,
+                    estimator_name=estimator_name,
+                    chk_pt=chk_pt,
+                    kwargs=kwargs
                 )
             audio_pred_dict, acc_res = evalute_ser_result(self.interpTemp_dir)
             result["interpTTS"] = [audio_pred_dict, acc_res]
+        # write in FastSpeech2/exp_main.py
         elif "fastspeech" in syn_models:
             syn_dir = "/home/rosen/Project/FastSpeech2/evaluation/interpTemp_fspeechGst"
             # check if dir is corrected formated
             audio_pred_dict, acc_res = evalute_ser_result(syn_dir)
             result["fastspeech"] = [audio_pred_dict, acc_res]
         elif "emodiff" in syn_models:
-            syn_dir = "/home/rosen/Project/FastSpeech2/evaluation/??"
+            syn_dir = "/home/rosen/Project/FastSpeech2/evaluation/???"
             audio_pred_dict, acc_res = evalute_ser_result(syn_dir)
             result["emodiff"] = [audio_pred_dict, acc_res]
-        else:
-            audio_pred_dict, acc_res = None, None
-        return acc_res
+        return result
+
+    def eval_by_EmoAccContour(self,
+                              model_evalDir_dict=("interpTTS", "emodiff", "fastspeech"),
+                              sep_nums=4
+                              ):
+        """"""
+        result = dict()  # {"emo1_emo2": {"modelA": [(emo1_t1_acc, emo1_t2_acc), (emo2_..)],}}
+        return result
 
     def eval_by_pref(self,
                      pref_num=5):
+        """???"""
         audio_gd_dict = get_audio_gd(self.exp_outdir)
         audio_gd_pref_dict = filter_pref_audio(audio_gd_dict, pref_num=pref_num)
         ## create preference test folder
@@ -439,8 +327,7 @@ class InterpEval:
         """
         audios = [case_study_example_temp["ang_hap"],
                   case_study_example_temp["ang_sad"],
-                  case_study_example_temp["sad_hap"]
-                  ]
+                  case_study_example_temp["sad_hap"]]
         show_mel(audios)
 
 
@@ -457,43 +344,12 @@ def get_emo_label(emo: str, emo_value=1):
     emo_label[0][emo_num_dict[emo]] = emo_value
     return emo_label
 
-
-class Freq_interp_eval():
-    def __init__(self):
-        pass
-
-    def eval_psdMatch(self):
-        pass
-
-    def eval_exampleCase(self):
-        """
-        compare the sample changing when with and w/o noise guidence
-        - with noise guidence
-            - 1st half: the harmonic spectrum is changing
-            - 2nd half: the other is changing
-        - w/o
-            - 1st half: overall changing
-            - 2nd half: overall changing
-        Returns:
-        """
-        
-        pass
-
-
-class Non_interp_eval():
-    def __init__(self):
-        pass
-
-
-    def eval_mos(self, punda=(0.2, 0.8), weight=(0.3, 0.7)):
-        for p in punda:
-            for w in weight:
-                pass
-
-    def eval_emoPref(self, punda=(0.2, 0.8), weight=(0.3, 0.7)):
-        for p in punda:
-            for w in weight:
-                pass
+def evaluate_mcd_result(syn_dir):
+    ref_dir = ""
+    audio_gd_dict = get_audio_gd(syn_dir)  # {"ang": ["1.wav", "2.wav", ...], "hap": ["1.wav", "2.wav", ...]}
+    ref_gd_dict = get_audio_ref(ref_dir)     # {"ang": ["1.wav", "2.wav", "3.wav", ...], "hap": [".."] }
+    mcd_dict = evaluate_mcd_result()  # {}   # {"ang": [1.2, 2.3], "hap": [2.3, ...]}
+    return mcd_dict
 
 
 def get_twohalf_emo(audio_gd_dict, parent_dir):
@@ -584,12 +440,37 @@ def create_pref_dir(audio_gd_pref_dict):
     pass
 
 
+
+###################### NOT USED ################
+"""
+def combineStyle(combineType="style_token", style1="", style2="", fastspeech=None):
+    if combineType == "style_token" or combineType == "psd":
+        if fastspeech == None:
+            raise IOError("Please input fastpseech model")
+
+    if combineType == "style_token":
+        gst_token1, _ = fastspeech(style1)
+        gst_token2, _ = fastspeech(style2)
+        gst_token12 = combineStyleToken(gst_token1, gst_token2)
+        return gst_token12
+    elif combineType == "mel":
+        combineMel(style1, style2)
+    elif combineType == "psd":
+        _, psd1 = fastspeech(style1)
+        gst_token2, _ = fastspeech(style2)
+        gst_token12 = combineStyleToken(gst_token1, gst_token2)
+        return gst_token12()
+"""
+
+
 if __name__ == '__main__':
+
     # Non_Interp
     EVAL_NON_INTERP = True
+    NEED_SYN = True
 
     # temp_Interp
-    EVAL_TEMP_INTERP = True
+    EVAL_TEMP_INTERP = False
     NEED_SYN_TEMPINTERP = False
     SER_EVAL, PREF_EVAL, TEMP_CASE_EVAL = True, False, False
 
@@ -598,8 +479,19 @@ if __name__ == '__main__':
     NEED_SYN_FREQINTERP = False
     PSD_MATCH_EVAL, FREQ_CASE_EVAL = False, False
 
-    # Non interp
-    EVAL_NON_INTERP = False
+    if EVAL_NON_INTERP:
+        # input
+        p_unda, weight = (0.2, 0.8), (0.3, 0.7)
+        no_eval = Non_interp_eval(emos=("Angry", "Happy", "Sad"),
+                                  syn_models=("interpTTS", ),
+                                  need_syn=NEED_SYN
+                                  )
+        # MCD
+        no_eval.eval_by_mcd()
+        no_eval.eval_mos()
+        no_eval.eval_smos()
+        # Case study
+        no_eval.eval_emoPref()
 
     temp_eval = InterpEval()
     if EVAL_TEMP_INTERP:
@@ -607,8 +499,8 @@ if __name__ == '__main__':
         if SER_EVAL:
             res_acc = temp_eval.eval_by_SER(
                 paired_emos=("Angry_Sad", "Sad_Happy", "Angry_Happy"),
-                #syn_models=("interpTTS",),
-                syn_models=("fastspeech",),
+                syn_models=("interpTTS",),
+                #syn_models=("fastspeech",),
                 need_syn=NEED_SYN_TEMPINTERP)
         if PREF_EVAL:
             temp_eval.eval_by_pref()
@@ -625,11 +517,3 @@ if __name__ == '__main__':
         # Case study
         if FREQ_CASE_EVAL:
             temp_eval.eval_exampleCase()
-
-    if EVAL_NON_INTERP:
-        # input
-        p_unda, weight = (0.2, 0.8), (0.3, 0.7)
-
-        non_eval = Non_interp_eval()
-        # Case study
-        non_eval.eval_emoPref()

@@ -184,7 +184,7 @@
   - The diversity of emotion (well controlled)
     - Diversity contains different intonation which is controlled by reference audio or soft label?
 
-![](./result_analysze_img/interpolation_style.png)
+![](../result_analysze_img/interpolation_style.png)
 
 <table border="0">
  <tr>

@@ -1,4 +1,32 @@
-# Four mode in inference_cond.py
+- [Train model](#train-model)
+  - [train\_multi\_speaker.py](#train_multi_speakerpy)
+- [Inference model](#inference-model)
+  - [1. NO\_INTERPOLATION](#1-no_interpolation)
+  - [2. INTERPOLATE\_INFERENCE\_SIMP](#2-interpolate_inference_simp)
+  - [3. INTERPOLATE\_INFERENCE\_TEMP](#3-interpolate_inference_temp)
+  - [4. INTERPOLATE\_INFERENCE\_FREQ](#4-interpolate_inference_freq)
+- [Experiment result: log](#experiment-result-log)
+- [Expriment code; exp](#expriment-code-exp)
+  - [exp\_main.py](#exp_mainpy)
+  - [TodoList](#todolist)
+
+
+# Train model
+## train_multi_speaker.py
+
+```plantuml
+@startuml
+:Select random val;
+:Draw enc/dec/algin images;
+:Write synthesized speech;
+:Start train;
+:Clip gradience;
+:save dur/prior/diff/enc/dec loss;
+:Output training message;
+:Save model;
+@enduml
+```
+# Inference model
 ## 1. NO_INTERPOLATION
 
 ## 2. INTERPOLATE_INFERENCE_SIMP
@@ -30,27 +58,25 @@
 ## 4. INTERPOLATE_INFERENCE_FREQ
 
 
-# Activation in train_multi_speaker.py
-
-```plantuml
-@startuml
-:Select random val;
-:Draw enc/dec/algin images;
-:Write synthesized speech;
-:Start train;
-:Clip gradience;
-:save dur/prior/diff/enc/dec loss;
-:Output training message;
-:Save model;
-@enduml
-```
+# Experiment result: log
+# Expriment code; exp
+## exp_main.py
+- non_interp
+  - mcd/mos/smos
+  - prosodic feature chagning along time 
+- temp_interp
+  - ser_eval: emo accuracy on 1/2 parts of speech
+  - 2 emotion accuracy changing along time
+  - prosodic feature chagning along time
+- freq_interp
+  - ?
 
 
 
-# exp_main.py
-## EVAL_TEMP_INTERP
-### SER_EVAL
-### PREF_EVAL
-### TEMP_CASE_EVAL
-## EVAL_FREQ_INTERP
-## EVAL_NON_INTERP
+## TodoList
+- create evaluation data -> syn_eval_data.py
+- get mcd
+- clear error in inference
+- get evaluation result
+  - visualization
+

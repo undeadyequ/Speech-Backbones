@@ -31,4 +31,4 @@ spk_emb_dim: 64
 emo_emb_dim: 5
 
 mu: "txt_depend"         # txt_depend or norm
-solver: "sde"            # sde or ode
+solver: "ode"            # sde or ode

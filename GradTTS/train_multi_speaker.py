@@ -98,7 +98,7 @@ def train_process_cond(configs):
     n_epochs = int(train_config["n_epochs"])
     resume_epoch = int(train_config["resume_epoch"])
     save_every = int(train_config["save_every"])
-    ckpt = f"{log_dir}grad_{resume_epoch}.pt"
+    ckpt = f"{log_dir}models/grad_{resume_epoch}.pt"
 
     # dataset
     train_dataset = TextMelSpeakerEmoDataset(train_filelist_path,
@@ -164,11 +164,14 @@ def train_process_cond(configs):
     print('Number of decoder parameters = %.2fm' % (model.decoder.nparams / 1e6))
     print('Initializing optimizer...')
     """
-
-    if resume_epoch > 1:
-        resume(ckpt, model, 1)
-
     optimizer = torch.optim.Adam(params=model.parameters(), lr=learning_rate)
+    if resume_epoch > 1:
+        resume(ckpt, model, optimizer, 1)
+
+    # Create subdir img/model/samples
+    Path("{}/img".format(log_dir)).mkdir(exist_ok=True)
+    Path("{}/models".format(log_dir)).mkdir(exist_ok=True)
+    Path("{}/samples".format(log_dir)).mkdir(exist_ok=True) # ??
 
     print('Logging test batch...')
     for item in test_batch:
@@ -176,7 +179,7 @@ def train_process_cond(configs):
         i = int(spk.cpu())
         logger.add_image(f'image_{i}/ground_truth', plot_tensor(mel.squeeze()),
                          global_step=0, dataformats='HWC')
-        save_plot(mel.squeeze(), f'{log_dir}/original_{i}.png')
+        save_plot(mel.squeeze(), f'{log_dir}/img/original_{i}.png')
 
     print('Start training...')
     iteration = 0
@@ -229,15 +232,15 @@ def train_process_cond(configs):
                 # show image and audio (show initiate image to check earlierly)
                 if epoch % show_img_per_epoch == 0 or epoch == 1 or epoch == 2 or epoch == 3:
                     save_plot(y_enc.squeeze().cpu(),
-                              f'{log_dir}/generated_enc_{i}_epoch{epoch}.png')
+                              f'{log_dir}/img/generated_enc_{i}_epoch{epoch}.png')
                     save_plot(y_dec.squeeze().cpu(),
-                              f'{log_dir}/generated_dec_{i}_epoch{epoch}.png')
+                              f'{log_dir}/img/generated_dec_{i}_epoch{epoch}.png')
                     save_plot(attn.squeeze().cpu(),
-                              f'{log_dir}/alignment_{i}_epoch{epoch}.png')
+                              f'{log_dir}/img/alignment_{i}_epoch{epoch}.png')
                     # synthesize audio
                     audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
                     ## create folder if not exist
-                    write(f'{log_dir}/sample_{i}_epoch{epoch}.wav', 22050, audio)
+                    write(f'{log_dir}/samples/sample_{i}_epoch{epoch}.wav', 22050, audio)
 
 
         model.train()
@@ -301,12 +304,25 @@ def train_process_cond(configs):
         msg += '| diffusion loss = %.3f\n' % np.mean(diff_losses)
         with open(f'{log_dir}/train.log', 'a') as f:
             f.write(msg)
-
         if epoch % save_every > 0:
             continue
 
-        ckpt = model.state_dict()
-        torch.save(ckpt, f=f"{log_dir}/grad_{epoch}.pt")
+        # save ckpt
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "loss": {
+                    "dur_loss": dur_loss,
+                    "prior_loss": prior_loss,
+                    "diff_loss": diff_loss
+                },
+            },
+            f"{log_dir}/models/grad_{epoch}.pt"
+        )
+        #ckpt = model.state_dict()
+        #torch.save(ckpt, f=f"{log_dir}/models/grad_{epoch}.pt")
 
 
 from typing import Sequence
@@ -317,18 +333,25 @@ from pathlib import Path
 def resume(
     checkpoint: Union[str, Path],
     model: torch.nn.Module,
+    optimzier: None,
     ngpu: int = 0,
 ):
-    states = torch.load(
+    ckpt_states = torch.load(
         checkpoint,
         map_location=f"cuda:{torch.cuda.current_device()}" if ngpu > 0 else "cpu",
     )
-    model.load_state_dict(states)
-    """
-        for optimizer, state in zip(optimizers, states["optimizers"]):
-        optimizer.load_state_dict(state)
-    """
-
+    if "model_state_dict" in ckpt_states:
+        model.load_state_dict(
+            ckpt_states["model_state_dict"])
+        optimzier.load_state_dict(
+            ckpt_states["optimizer_state_dict"]
+        )
+    else:
+        states = torch.load(
+            checkpoint,
+            map_location=f"cuda:{torch.cuda.current_device()}" if ngpu > 0 else "cpu",
+        )
+        model.load_state_dict(states)
 
 def get_vocoder():
     HIFIGAN_CONFIG = './checkpts/hifigan-config.json'  # ./checkpts/config.json
@@ -360,7 +383,9 @@ if __name__ == "__main__":
         "-m", "--model_config", type=str,
         #required=True,
         help="path to model.yaml",
-        default=config_dir + "/model_gradTTS_v2.yaml"
+        default=config_dir + "/model_gradTTS_v2.yaml",
+        #default = config_dir + "/model_gradTTS_linear.yaml"
+
     )
     parser.add_argument(
         "-t", "--train_config", type=str,

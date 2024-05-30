@@ -156,11 +156,17 @@ class GradLogPEstimator2dCond(BaseModule):
                 cond_res, attn_amp = self.forward_to_unet(x, mask, hids, t, return_attmap=return_attmap)
             else:
                 cond_res = self.forward_to_unet(x, mask, hids, t, return_attmap=return_attmap)
-            b, c, d_q, l_q = x.shape
-            hids = x.clone()  # <- NO condition
-            hids = hids.view(b, -1, l_q)
-            uncond_res = self.forward_to_unet(x, mask, hids, t)
-            res = (1 + guidence_strength) * cond_res - guidence_strength * uncond_res
+
+            Need_guidence = False
+            if self.p_uncond != 0.0:
+                b, c, d_q, l_q = x.shape
+                hids = x.clone()  # <- NO condition
+                hids = hids.view(b, -1, l_q)
+                uncond_res = self.forward_to_unet(x, mask, hids, t)
+                res = (1 + guidence_strength) * cond_res - guidence_strength * uncond_res
+            else:
+                res = cond_res
+
             if return_attmap:
                 return res, attn_amp
         return res
@@ -288,11 +294,11 @@ class GradLogPEstimator2dCond(BaseModule):
                 b, _, d_q, l_q = x.shape
                 # generate 1st/2nd mask (e.g. mask left/right)
                 #print("up x shape: {}".format(x.shape))
-                temp_mask_left, temp_mask_right = create_left_right_mask(b, self.heads, d_q, l_q)
+                temp_mask_left, temp_mask_right = create_left_right_mask(b, self.heads, d_q, l_q)   # [b, h, l_q, 1]
                 x_left, attn_map_left = attn(x, key=hids1, value=hids1, attn_mask=temp_mask_left,
-                              mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
+                                             mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
                 x_right, attn_map_right = attn(x, key=hids2, value=hids2, attn_mask=temp_mask_right,
-                               mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
+                                               mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
                 x = x_left + x_right
             else:
                 # only apply reference audio2 in other layers
@@ -320,7 +326,7 @@ class GradLogPEstimator2dCond(BaseModule):
             x = resnet1(x, mask_up, t)
             x = resnet2(x, mask_up, t)
 
-            # compute temporal mask and get temporally interpolated x
+            # Compute temporal mask and get temporally interpolated x
             if i == 0 or mask_all_layer:
                 b, _, d_q, l_q = x.shape
                 #print("down x shape: {}".format(x.shape))
@@ -362,26 +368,6 @@ class GradLogPEstimator2dCond(BaseModule):
                             ):
         """
         Reference
-        Args:
-            x:
-            mask:
-            mu:
-            t:
-            spk:
-            melstyle1:
-            emo_label1:
-            pitch1:
-            melstyle2:
-            emo_label2:
-            pitch2:
-            align_len:
-            align_mtx:
-            guide_scale:
-            tal:
-            alpha:
-
-        Returns:
-
         """
         if t > tal_right:
             print("Refer to reference1!")
@@ -531,19 +517,31 @@ class GradLogPEstimator2dCond(BaseModule):
         return score_emo, x_guided
 
 
-def create_left_right_mask(b, heads, d_q, l_q, device="cuda"):
-    if device == "cuda":
-        temp_mask_left = torch.ones((b, heads, d_q * l_q, 1)).cuda()
-        temp_mask_right = torch.ones((b, heads, d_q * l_q, 1)).cuda()
+def create_left_right_mask(b, heads, d_q, l_q, device="cuda", maskType="frame"):
+    if maskType == "bin":
+        if device == "cuda":
+            temp_mask_left = torch.ones((b, heads, d_q * l_q, 1)).cuda()
+            temp_mask_right = torch.ones((b, heads, d_q * l_q, 1)).cuda()
+        else:
+            temp_mask_left = torch.ones((b, heads, d_q * l_q, 1))
+            temp_mask_right = torch.ones((b, heads, d_q * l_q, 1))
+        temp_mask_left[:, :, :d_q * int(l_q * 0.5), :] = 0
+        temp_mask_left = temp_mask_left > 0
+        temp_mask_right[:, :, d_q * int(l_q * 0.5):, :] = 0
+        temp_mask_right = temp_mask_right > 0
+        return temp_mask_left, temp_mask_right
     else:
-        temp_mask_left = torch.ones((b, heads, d_q * l_q, 1))
-        temp_mask_right = torch.ones((b, heads, d_q * l_q, 1))
-    temp_mask_left[:, :, :d_q * int(l_q * 0.5), :] = 0
-    temp_mask_left = temp_mask_left > 0
-    temp_mask_right[:, :, d_q * int(l_q * 0.5):, :] = 0
-    temp_mask_right = temp_mask_right > 0
-    return temp_mask_left, temp_mask_right
-
+        if device == "cuda":
+            temp_mask_left = torch.ones((b, heads, l_q, 1)).cuda()
+            temp_mask_right = torch.ones((b, heads, l_q, 1)).cuda()
+        else:
+            temp_mask_left = torch.ones((b, heads, l_q, 1))
+            temp_mask_right = torch.ones((b, heads, l_q, 1))
+        temp_mask_left[:, :, :int(l_q * 0.5), :] = 0
+        temp_mask_left = temp_mask_left > 0
+        temp_mask_right[:, :, int(l_q * 0.5):, :] = 0
+        temp_mask_right = temp_mask_right > 0
+        return temp_mask_left, temp_mask_right
 
 def create_utter_word_mask_freq(b, heads, d_q, l_q, emb_n,
                                 ref_start, ref_end, target_start, target_end):

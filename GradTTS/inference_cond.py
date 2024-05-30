@@ -28,6 +28,7 @@ from models import Generator as HiFiGAN
 from pathlib import Path
 from model import GradTTS, CondGradTTS, CondGradTTSLDM
 import yaml
+from utils import get_emo_label
 
 #HIFIGAN_CONFIG = './checkpts/hifigan-config.json'
 #HIFIGAN_CHECKPT = './checkpts/hifigan.pt'
@@ -37,6 +38,7 @@ import yaml
 HIFIGAN_CONFIG = '/home/rosen/Project/Speech-Backbones/GradTTS/hifi-gan/checkpts/hifigan-config.json' # ./checkpts/config.json
 HIFIGAN_CHECKPT = '/home/rosen/Project/Speech-Backbones/GradTTS/checkpts/hifigan.pt'
 
+cmu = cmudict.CMUDict('/home/rosen/Project/Speech-Backbones/GradTTS/resources/cmu_dictionary')
 
 
 def get_model(configs, model="gradtts_lm"):
@@ -128,6 +130,23 @@ def get_model(configs, model="gradtts_lm"):
                             heads,
                             p_uncond)
 
+from typing import Union
+def load_model_state(checkpoint: Union[str, Path], model: torch.nn.Module, ngpu=1):
+    ckpt_states = torch.load(
+        checkpoint,
+        map_location=f"cuda:{torch.cuda.current_device()}" if ngpu > 0 else "cpu",
+    )
+
+    if "model_state_dict" in ckpt_states:
+        model.load_state_dict(
+            ckpt_states["model_state_dict"])
+    else:  # temp use
+        states = torch.load(
+            checkpoint,
+            map_location=f"cuda:{torch.cuda.current_device()}" if ngpu > 0 else "cpu",
+        )
+        model.load_state_dict(states)
+
 
 def inference(configs,
               model_name,
@@ -144,7 +163,8 @@ def inference(configs,
     # Get model
     print('Initializing Grad-TTS...')
     generator = get_model(configs, model_name)
-    generator.load_state_dict(torch.load(chk_pt, map_location=lambda loc, storage: loc))
+
+    load_model_state(chk_pt, generator)
     _ = generator.cuda().eval()
 
     print(f'Number of parameters: {generator.nparams}')
@@ -158,7 +178,6 @@ def inference(configs,
 
     with open(syn_txt, 'r', encoding='utf-8') as f:
         texts = [line.strip() for line in f.readlines()]
-    cmu = cmudict.CMUDict('./resources/cmu_dictionary')
 
     with torch.no_grad():
         for i, text in enumerate(texts):
@@ -184,9 +203,9 @@ def inference(configs,
                 y_enc, y_dec, attn = generator.forward(x,
                                                        x_lengths,
                                                        n_timesteps=time_steps,
-                                                       temperature=1.5,
+                                                       temperature=1.0,  # 1.5
                                                        stoc=True,
-                                                       length_scale=0.91,
+                                                       length_scale=1.0,  # 0.91
                                                        spk=spk,
                                                        emo_label=emo_label,
                                                        melstyle=melstyle,
@@ -223,7 +242,8 @@ def inference_interp(
     # Get model
     print('Initializing Grad-TTS...')
     generator = get_model(configs, model_name)
-    generator.load_state_dict(torch.load(chk_pt, map_location=lambda loc, storage: loc))
+    load_model_state(chk_pt, generator)
+
     _ = generator.cuda().eval()
 
     print(f'Number of parameters: {generator.nparams}')
@@ -289,60 +309,15 @@ def inference_interp(
     print('Done. Check out `out` folder for samples.')
 
 
-def get_emo_label(emo: str, emo_value=1):
-    emo_emb_dim = len(emo_num_dict.keys())
-    emo_label = [[0] * emo_emb_dim]
-    emo_label[0][emo_num_dict[emo]] = emo_value
-    return emo_label
-
-
 if __name__ == '__main__':
     # constant parameter
-    emo_num_dict = {
-        "Angry": 0,
-        "Surprise": 1,
-        "Sad": 2,
-        "Neutral": 3,
-        "Happy": 4
-    }
-    emo_melstyle_dict = {
-        "Angry": "0015_000415.npy",  # Tom could hardly speak for laughing
-        "Surprise": "0015_001465.npy",
-        "Sad": "0015_001115.npy",   # Tom could hardly speak for laughing
-        "Neutral": "0015_000065.npy",
-        "Happy": "0015_000765.npy"
-    }
-    # used for extract pitch (Phoneme average)
-    psd_dict = {
-        "Angry": "0015-pitch-0015_000415.npy",  # Tom could hardly speak for laughing
-        "Surprise": "0015-pitch-0015_001465.npy",
-        "Sad": "0015-pitch-0015_001115.npy",  # Tom could hardly speak for laughing
-        "Neutral": "0015-pitch-0015_000065.npy",
-        "Happy": "0015-pitch-0015_000765.npy"
-    }
-    # used for extract pitch (No phoneme average)
-    wav_dict = {
-        "Angry": "0015_000415.wav",  # Tom could hardly speak for laughing
-        "Surprise": "0015_001465.wav",
-        "Sad": "0015_001115.wav",  # Tom could hardly speak for laughing
-        "Neutral": "0015_000065.npy",
-        "Happy": "0015_000765.npy"
-    }
-
-    logs_dir_par = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
-    #logs_dir = logs_dir_par + "gradtts_crossSelf_v2/"
-    logs_dir = logs_dir_par + "interpEmoTTS_frame2frameAttn/"
-
-    config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
-    melstyle_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/emo_reps"
-    psd_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/pitch"
-    wav_dir = "/home/rosen/Project/FastSpeech2/ESD/16k_wav"
-
+    from const_param import emo_num_dict, emo_melstyle_dict, psd_dict, wav_dict
+    from const_param import logs_dir_par, logs_dir, config_dir, melstyle_dir, psd_dir, wav_dir
 
     ## INPUT
     ### General
     checkpoint = "grad_65.pt"
-    chk_pt = logs_dir + checkpoint
+    chk_pt = logs_dir + "models/" + checkpoint
     syn_txt = "resources/filelists/synthesis1.txt"
     time_steps = 100
     model_name = "gradtts_cross"
@@ -351,7 +326,7 @@ if __name__ == '__main__':
 
     ### Style
     emo_label = "Angry"
-    emo_label_tensor = torch.LongTensor(get_emo_label(emo_label)).cuda()
+    emo_label_tensor = torch.LongTensor(get_emo_label(emo_label, emo_num_dict)).cuda()
     melstyle_tensor = torch.from_numpy(np.load(
         melstyle_dir + "/" + emo_melstyle_dict[emo_label])).cuda()
     melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
@@ -375,8 +350,8 @@ if __name__ == '__main__':
 
     emo_label1 = "Sad"
     emo_label2 = "Angry"
-    emo_label_sad = torch.LongTensor(get_emo_label(emo_label1)).cuda()
-    emo_label_ang = torch.LongTensor(get_emo_label(emo_label2)).cuda()
+    emo_label_sad = torch.LongTensor(get_emo_label(emo_label1, emo_num_dict)).cuda()
+    emo_label_ang = torch.LongTensor(get_emo_label(emo_label2, emo_num_dict)).cuda()
 
     # psd input (N,)
     """
@@ -406,7 +381,7 @@ if __name__ == '__main__':
 
         for emo_label in emo_labels:
             for guidence_strength in guidence_strengths:
-                emo_label_tensor = torch.LongTensor(get_emo_label(emo_label)).cuda()
+                emo_label_tensor = torch.LongTensor(get_emo_label(emo_label, emo_num_dict)).cuda()
                 melstyle_tensor = torch.from_numpy(np.load(
                     melstyle_dir + "/" + emo_melstyle_dict[emo_label])).cuda()
                 melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)

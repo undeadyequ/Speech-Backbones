@@ -178,6 +178,7 @@ class MultiAttention2(BaseModule):
         else:
             return output, attn
 
+
 class MultiAttention3(BaseModule):
     def __init__(self, c_q, d_k, att_dim, heads=4, origin_c_q=64):
         super(MultiAttention3, self).__init__()
@@ -192,21 +193,19 @@ class MultiAttention3(BaseModule):
         self.W_Q = torch.nn.Conv2d(c_q, att_dim * heads, 1, bias=False)
         self.W_K = torch.nn.Linear(d_k, att_dim * heads * self.d_q)  #
         self.W_V = torch.nn.Linear(d_k, att_dim * heads * self.d_q)
-
         #self.W_K = torch.nn.Linear(d_k, att_dim * heads * self.d_q)  #
         #self.W_V = torch.nn.Linear(d_k, att_dim * heads * self.d_q)
-
         self.to_out = torch.nn.Linear(self.heads*self.att_dim, c_q)
 
 
     def forward(self, input_Q, key=None, value=None, attn_mask=None, mask_value=0):
         """
-
+        frame2frame attention
         Args:
             input_Q: (b, c, d_q, l_q)   c = dim_in_q
             key:    (b, d_k, l_k)       d_k = d_k
             value:  (b, d_k, l_k)
-            attn_mask: Mask attention score map for interpolation.
+            attn_mask: # [b, h, l_q, 1] Mask attention score map for interpolation.
         Returns:
             out:  (b, c, d_q, l_q)
 
@@ -238,24 +237,26 @@ class MultiAttention3(BaseModule):
         #    [context[:, i, :, :] for i in range(context.size(1))], dim=-1)   # (b, d_q * l_q, d_m * h)  # why not use view
         context = context.view(b, l_q, d_q, self.heads*self.att_dim)
 
-        output = self.to_out(context)    # -> (b, l_q, d_q, c)
+        output = self.to_out(context)  # -> (b, l_q, d_q, c)
         resnet = input_Q.view(b, l_q, d_q, c)
-        output = output + resnet         # -> (b, l_q, d_q, c)  # There are 2 residual
+        output = output + resnet       # -> (b, l_q, d_q, c)  # There is another mask outside in Resnet(Rezero(Attn()))
 
-        if attn_mask is not None:        # Mask on output+1st residual
-            attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1)   # return this for mask on 2nd residual
+        if attn_mask is not None:      # Mask on output + 1st residual
+            #attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1)   # return this for mask on 2nd residual
+            # convert mask (for f2f)
+            attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1).unsqueeze(2)  # return this for mask on 2nd residual
             output = output.masked_fill(attn_mask_nohead, mask_value)
         else:
             attn_mask_nohead = None
         if output.get_device() == -1:
             output = torch.nn.LayerNorm(c)(output)
-            output = output.view(b, c, l_q, d_q).transpose(2, 3)
+            output = output.view(b, c, l_q, d_q).transpose(2, 3)  # (b, c, l_q, d_q)
         else:
             output = torch.nn.LayerNorm(c).cuda()(output)
             output = output.view(b, c, l_q, d_q).transpose(2, 3)
 
         if attn_mask_nohead is not None:
-            return output, attn, attn_mask_nohead
+            return output, attn, attn_mask_nohead   # return mask for 2nd residual
         else:
             return output, attn
 
@@ -325,7 +326,8 @@ class Residual(BaseModule):
             if len(output) == 3:
                 attn_mask = output[2].squeeze(2)
                 b, c, m, l = output[0].shape
-                attn_mask = attn_mask.view(b, -1, l, m).transpose(2, 3)
+                #attn_mask = attn_mask.view(b, -1, l, m).transpose(2, 3)  # ?? ad hoc
+                attn_mask = attn_mask.unsqueeze(2).transpose(1, 3)
                 x = x.masked_fill(attn_mask, 0)
             return output[0] + x, output[1]
         else:

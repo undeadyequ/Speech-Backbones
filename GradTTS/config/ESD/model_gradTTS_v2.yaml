@@ -25,7 +25,7 @@ unet:
   att_dim: 64
   heads: 4
   p_uncond: 0.0    # 0 or 0.3
-  guidence_strength: 3
+  guidence_strength: 3 # only for inference
 
 spk_emb_dim: 64
 emo_emb_dim: 5

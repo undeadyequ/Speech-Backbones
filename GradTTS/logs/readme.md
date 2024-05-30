@@ -1,0 +1,14 @@
+# logs dir
+- model_name (interpEmoTTS_frame2frameAttn)
+  - imgs
+  - models
+    - grad_*.pt
+  - samples
+    - sample_*.wav
+  - chpt[]_time[]_interp[temp/freq/no]_spk[]_emo1_emo2_[weight]
+  - interptemp
+    - emo[i]_emo[j]
+  - interpfreq
+    - emo[i]_emo[j]
+  - interpno
+    - emo[i]
