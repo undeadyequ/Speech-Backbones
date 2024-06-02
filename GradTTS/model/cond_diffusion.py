@@ -19,11 +19,9 @@ from src.diffusers import UNet2DConditionModel
 
 
 class CondDiffusion(BaseModule):
-
     """
     Conditional Diffusion that denoising mel-spectrogram from latent normal distribution
     """
-
     def __init__(self,
                  n_feats,
                  dim,

@@ -22,6 +22,7 @@ decoder:
 unet:
   unet_type: "origin"  # origin or diffuser
   att_type: "cross"   # linear or crossAtt
+  att_gran: "frame2bin"  # bin2frame or phone2frame
   att_dim: 128
   heads: 4
   p_uncond: 0.3

@@ -24,6 +24,7 @@ class GradLogPEstimator2dCond(BaseModule):
                  pe_scale=1000,
                  emo_emb_dim=768,
                  att_type="linear",
+                 attn_gran="frame2bin",
                  att_dim=128,
                  heads=4,
                  p_uncond=0.9,
@@ -82,22 +83,29 @@ class GradLogPEstimator2dCond(BaseModule):
                 ResnetBlock(dim_in, dim_out, time_emb_dim=dim),
                 ResnetBlock(dim_out, dim_out, time_emb_dim=dim),
                 # MultiAttention3->frame2frame; MultiAttention2->bin2frame (simFrame2fame?)
+                #Residual(Rezero(LinearAttention(dim_out) if att_type == "linear" else
+                #                MultiAttention(dim_out, self.enc_hid_dim, att_dim, heads, dim))),
                 Residual(Rezero(LinearAttention(dim_out) if att_type == "linear" else
-                                MultiAttention3(dim_out, self.enc_hid_dim, att_dim, heads, dim))),
+                                MultiAttention2(dim_out, self.enc_hid_dim, att_dim, heads))),
+
                 Downsample(dim_out) if not is_last else torch.nn.Identity()]))
 
         mid_dim = dims[-1]
         self.mid_block1 = ResnetBlock(mid_dim, mid_dim, time_emb_dim=dim)
+        #self.mid_attn = Residual(Rezero(LinearAttention(mid_dim) if att_type == "linear" else
+        #                                MultiAttention(mid_dim, self.enc_hid_dim, att_dim, heads)))
         self.mid_attn = Residual(Rezero(LinearAttention(mid_dim) if att_type == "linear" else
-                                        MultiAttention3(mid_dim, self.enc_hid_dim, att_dim, heads)))
+                                        MultiAttention2(mid_dim, self.enc_hid_dim, att_dim)))
         self.mid_block2 = ResnetBlock(mid_dim, mid_dim, time_emb_dim=dim)
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
             self.ups.append(torch.nn.ModuleList([
                 ResnetBlock(dim_out * 2, dim_in, time_emb_dim=dim),
                 ResnetBlock(dim_in, dim_in, time_emb_dim=dim),
+                #Residual(Rezero(LinearAttention(dim_in) if att_type == "linear" else
+                #                MultiAttention(dim_in, self.enc_hid_dim, att_dim, heads, dim / 2 if is_last else dim))),
                 Residual(Rezero(LinearAttention(dim_in) if att_type == "linear" else
-                            MultiAttention3(dim_in, self.enc_hid_dim, att_dim, heads, dim / 2 if is_last else dim))),
+                            MultiAttention2(dim_in, self.enc_hid_dim, att_dim, heads))),
                 Upsample(dim_in)]))
         self.final_block = Block(dim, dim)
         self.final_conv = torch.nn.Conv2d(dim, 1, 1)
@@ -332,10 +340,10 @@ class GradLogPEstimator2dCond(BaseModule):
                 #print("down x shape: {}".format(x.shape))
                 temp_mask_left, temp_mask_right = create_left_right_mask(b, self.heads, d_q, l_q)
                 x_left, attn_map_left = attn(x, key=hids1, value=hids1,
-                                             attn_mask=temp_mask_right,
+                                             attn_mask=temp_mask_left,
                                              mask_value=temp_mask_value)   # -> (b, c_out_i, d, l)
                 x_right, attn_map_right = attn(x, key=hids2, value=hids2,
-                                               attn_mask=temp_mask_left,
+                                               attn_mask=temp_mask_right,
                                                mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
                 x = x_left + x_right
             else:
@@ -515,7 +523,6 @@ class GradLogPEstimator2dCond(BaseModule):
         # get x_guided_score = unet(x_guided)
         x_guided = x_guided.detach()
         return score_emo, x_guided
-
 
 def create_left_right_mask(b, heads, d_q, l_q, device="cuda", maskType="frame"):
     if maskType == "bin":

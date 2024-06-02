@@ -1,9 +1,14 @@
 dataset: "ESD"   # libri-tts or ljspeech, ESD
 datatype: "melstyle"  # psd, emo_embed, other, melstyle
 
+computer_path1: "rosen/Project"
+computer_path2: "acc12642fx/project"
+
+
 path:
   # Original embedding
   corpus_path: "/home/rosen/Project/FastSpeech2/ESD"
+  #corpus_path: "/home/acc12642fx/project/FastSpeech2/ESD"
   emo_emb_dir: "emo_reps"
   psd_emb_dir: "psd_reps"
   idx_emo_dict: "metadata_22322.json"
@@ -14,6 +19,8 @@ path:
 
   # Trained embedding
   preprocessed_path: "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD"
+  #preprocessed_path: "/home/acc12642fx/project/FastSpeech2/preprocessed_data/ESD"
+
   mel: "mel"
   pitch: "pitch"
   energy: "energy"

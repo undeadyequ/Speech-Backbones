@@ -241,21 +241,24 @@ class MultiAttention3(BaseModule):
         resnet = input_Q.view(b, l_q, d_q, c)
         output = output + resnet       # -> (b, l_q, d_q, c)  # There is another mask outside in Resnet(Rezero(Attn()))
 
+
+        if output.get_device() == -1:
+            output = torch.nn.LayerNorm(c)(output)
+            output = output.view(b, c, l_q, d_q).transpose(2, 3)  # (b, c, d_q, l_q)
+        else:
+            output = torch.nn.LayerNorm(c).cuda()(output)
+            output = output.view(b, c, d_q, l_q)
+
         if attn_mask is not None:      # Mask on output + 1st residual
             #attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1)   # return this for mask on 2nd residual
             # convert mask (for f2f)
-            attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1).unsqueeze(2)  # return this for mask on 2nd residual
+            attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1).transpose(1, 2).unsqueeze(2)  # return this for mask on 2nd residual
             output = output.masked_fill(attn_mask_nohead, mask_value)
         else:
             attn_mask_nohead = None
-        if output.get_device() == -1:
-            output = torch.nn.LayerNorm(c)(output)
-            output = output.view(b, c, l_q, d_q).transpose(2, 3)  # (b, c, l_q, d_q)
-        else:
-            output = torch.nn.LayerNorm(c).cuda()(output)
-            output = output.view(b, c, l_q, d_q).transpose(2, 3)
 
         if attn_mask_nohead is not None:
+            #print(output)
             return output, attn, attn_mask_nohead   # return mask for 2nd residual
         else:
             return output, attn
@@ -324,10 +327,10 @@ class Residual(BaseModule):
         output = self.fn(x, *args, **kwargs)
         if type(output) is tuple and len(output) >= 2:
             if len(output) == 3:
-                attn_mask = output[2].squeeze(2)
-                b, c, m, l = output[0].shape
+                attn_mask = output[2]
+                #b, c, m, l = output[0].shape
                 #attn_mask = attn_mask.view(b, -1, l, m).transpose(2, 3)  # ?? ad hoc
-                attn_mask = attn_mask.unsqueeze(2).transpose(1, 3)
+                #attn_mask = attn_mask.unsqueeze(2).transpose(1, 3)
                 x = x.masked_fill(attn_mask, 0)
             return output[0] + x, output[1]
         else:
