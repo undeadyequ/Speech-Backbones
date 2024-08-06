@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 - [Cross Attention](#cross-attention)
 - [p2p](#p2p)
   - [f2f:](#f2f)
@@ -12,17 +13,11 @@
   - [Question](#question)
   - [expected](#expected)
 
-
 # Cross Attention
 Input: 
 Q: (c, l_q, d_q)
 K: (l_k, d_k)
 V: (l_k, d_k)
-(batch is ignored)
-
-# p2p 
-
-## f2f:
 
 Q \
 :arrow_right:Conv2d(c, h * att_dim): Q(h * att_dim, l_q, d_q) \
@@ -57,13 +52,18 @@ QKV \
   - emo_label: (80) -> (frame_len, 80)
   - Channels: [(3, 64), (64, 128), (128, 256)]
   - input_q in 
+<<<<<<< HEAD
     - down: [(64, l_q, 80), (128, 40, 40), (256, 20, 20)]
+=======
+    - down: [(64, 80, 80), (128, 40, 40), (256, 20, 20)]
+>>>>>>> c910aaf8244ddefdac29757b5c3e791fd697d793
     - mid: [(256, 20, 20)]
     - up: [(256, 20, 20), (128, 20, 20), (64, 40, 40)]
 
 - Note
   1. **The last layer of downNet is not downsampled**.
 
+<<<<<<< HEAD
 
 ## f2b
 ### The size of attn_map 
@@ -117,3 +117,5 @@ x_mask:
 
 ## expected
 1. If the target phoneme exist in reference, use reference phoneme, if not exist, use resnet result.
+=======
+>>>>>>> c910aaf8244ddefdac29757b5c3e791fd697d793
