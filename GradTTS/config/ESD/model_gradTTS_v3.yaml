@@ -15,7 +15,7 @@ decoder:
   beta_min: 0.05
   beta_max: 20.0
   pe_scale: 1000  # 1 for `grad-tts-old.pt` checkpoint
-  stoc: True
+  stoc: False # default = True
   temperature: 1.0 # terminal variance
   n_timesteps: 50
 

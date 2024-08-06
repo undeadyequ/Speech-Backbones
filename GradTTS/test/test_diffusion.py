@@ -8,7 +8,7 @@ sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
 import torch
 import yaml
 from GradTTS.model.sampleGuidence import SampleGuidence, create_pitch_bin_mask
-import pytest
+#import pytest
 
 
 def test_others():
@@ -17,7 +17,7 @@ def test_others():
     masks = torch.zeros([2, 3, 4, 5])
 
     masks[:, :, :2, :] = 1
-    attn_after = attn.masked_fill(masks, 0)
+    attn_after = attn.masked_fill(masks>0, 0)
 
     print(attn)
     print(attn_after)

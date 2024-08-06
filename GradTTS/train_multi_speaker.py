@@ -371,6 +371,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--restore_step", type=int, default=250000)
+
     parser.add_argument(
         "-p",
         "--preprocess_config",
@@ -383,7 +384,7 @@ if __name__ == "__main__":
         "-m", "--model_config", type=str,
         #required=True,
         help="path to model.yaml",
-        default=config_dir + "/model_gradTTS_v2.yaml",
+        default=config_dir + "/model_gradTTS_v3.yaml",
         #default = config_dir + "/model_gradTTS_linear.yaml"
 
     )

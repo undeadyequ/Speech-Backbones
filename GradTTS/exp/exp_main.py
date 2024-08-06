@@ -32,7 +32,12 @@ import librosa
 import numpy as np
 from syn_eval_data import synthesize_by_tempInterp, synthesize_by_noInterp
 
-from GradTTS.const_param import emo_num_dict, emo_melstyle_dict1, emo_melstyle_dict, psd_dict, wav_dict
+from GradTTS.const_param import (emo_num_dict,
+                                 emo_melstyle_dict1,
+                                 emo_melstyle_dict2,
+                                 emo_melstyle_dict,
+                                 psd_dict,
+                                 wav_dict)
 from GradTTS.const_param import logs_dir_par, logs_dir, config_dir, melstyle_dir, psd_dir, wav_dir
 from GradTTS.const_param import label2id_SER
 
@@ -54,7 +59,8 @@ eval_emodiff_base_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
 
 eval_model_base_dir = {
     #"interpTTS": eval_gradtts_base_dir + "interpEmoTTS_frame2frameAttn_noJoint",
-    "interpTTS": eval_gradtts_base_dir + "interpEmoTTS_linearAttn",
+    "interpTTS": eval_gradtts_base_dir + "interpEmoTTS_frame2binAttn_noJoint",
+    #"interpTTS": eval_gradtts_base_dir + "interpEmoTTS_linearAttn",
     #"interpTTS": eval_gradtts_base_dir + "gradtts_crossSelf_puncond_n1_neworder_fixmask",
     "emodiff": eval_emodiff_base_dir + "",
     "fastspeech": eval_fastspeech_base_dir + ""}
@@ -62,7 +68,8 @@ eval_model_base_dir = {
 case_study_example_temp = {
     "ang_sad": "",
     "sad_hap": "",
-    "ang_hap": ""}
+    "ang_hap": ""
+}
 
 
 def combineStyleToken(token1, token2):
@@ -83,8 +90,15 @@ def combinePSD(psd1, psd2):
 model_yaml = {
     "crossAttn_f2f_nonJoint": "model_gradTTS_v2",
     "crossAttn_f2f": "model_gradTTS",
-    "crossAttn_f2b": "",  # Change to Multihead2
+    "crossAttn_f2b": "model_gradTTS_v3",  # Change to Multihead2
     "linearAttn": "model_gradTTS_linear"
+}
+
+ckpt_dict = {
+    "crossAttn_f2f_nonJoint": "460",
+    "crossAttn_f2f": "68",
+    "crossAttn_f2b": "400",  # Change to Multihead2
+    "linearAttn": "620"
 }
 
 def get_interpTTS_infer_config(logs_dir, infer_type="interp", sub_model_type="crossAttn_f2f_nonJoint"):
@@ -103,11 +117,11 @@ def get_interpTTS_infer_config(logs_dir, infer_type="interp", sub_model_type="cr
     estimator_name = "gradtts_cross"
 
     # ckpt version
-    checkpoint = "/models/grad_118.pt"   # grad_54.pt
+    checkpoint = "/models/grad_{}.pt".format(ckpt_dict[sub_model_type])   # grad_54.pt
     chk_pt = logs_dir + checkpoint
 
     # text
-    syn_txt = "../resources/filelists/synthesis1.txt"
+    syn_txt = "../resources/filelists/synthesis1_closetext_onlyOne.txt"
 
     # inference related
     time_steps = 50
@@ -119,7 +133,7 @@ def get_interpTTS_infer_config(logs_dir, infer_type="interp", sub_model_type="cr
 
     # interpolated related
     interp_type = "temp"
-    mask_time_step = int(time_steps / 1.0)
+    mask_time_step = int(time_steps - 0)
     mask_all_layer = True
     temp_mask_value = 0
 
@@ -143,6 +157,7 @@ def get_interpTTS_infer_config(logs_dir, infer_type="interp", sub_model_type="cr
         }
     return configs, estimator_name, chk_pt, kwargs
 
+
 def get_emoDiff_infer_config():
     pass
 
@@ -159,21 +174,20 @@ class Non_interp_eval():
             infer_type="nonInterp",
             sub_model_type=sub_model_type
         )
-        if "interpTTS" in syn_models:
-            if need_syn:
+        if need_syn:
+            if "interpTTS" in syn_models:
                 synthesize_by_noInterp(
                     emos=emos,
                     syn_models=syn_models,
                     eval_dir=eval_model_base_dir["interpTTS"],
-                    emo_melstyle_dict=emo_melstyle_dict1,
+                    emo_melstyle_dict=emo_melstyle_dict2,
                     configs=configs,
                     estimator_name=estimator_name,
                     chk_pt=chk_pt,
                     kwargs=kwargs
                 )
-
     def eval_by_mcd(self,
-                    syn_models = ("modelA")
+                    syn_models=("interpTTS")
                     ):
         mcd_dict = dict() # {"modelA": [()]}
         if "interpTTS" in syn_models:
@@ -204,9 +218,7 @@ class Non_interp_eval():
         for p in punda:
             for w in weight:
                 pass
-
     # Visualization
-
 
 class InterpEval:
     def __init__(self):
@@ -228,7 +240,9 @@ class InterpEval:
 
     def eval_by_SER(self,
                     paired_emos=("Angry_Sad", "Sad_Hap", "Angry_Happy"),
+                    emoStyle_dict=emo_melstyle_dict1,
                     syn_models=("interpTTS", "emodiff", "fastspeech"),
+                    submodels="crossAttn_f2f_nonJoint",
                     need_syn=False
                     ):
         """
@@ -236,13 +250,14 @@ class InterpEval:
         Returns:
         """
         configs, estimator_name, chk_pt, kwargs = get_interpTTS_infer_config(
-            eval_model_base_dir["interpTTS"])
+            eval_model_base_dir["interpTTS"], sub_model_type=submodels)
 
         result = dict()  # {"modelA": {"emo1_emo2": [emo1_acc, emo2_acc],}}
         if "interpTTS" in syn_models:
             if need_syn:
                 synthesize_by_tempInterp(
-                    paired_emos=paired_emos,
+                    paired_emos=paired_emos,      # style1
+                    emoStyle_dict=emoStyle_dict,  # style2
                     syn_models=syn_models,
                     eval_interp_dir=eval_model_base_dir["interpTTS"],
                     configs=configs,
@@ -427,7 +442,8 @@ def get_acc_res(audio_predEmo_dict):
 
         acc_1st_emos = acc_metric.compute(predictions=pred_1st_emos, references=gd_1st_emos)["accuracy"]
         acc_2nd_emos = acc_metric.compute(predictions=pred_2nd_emos, references=gd_2nd_emos)["accuracy"]
-        print(acc_1st_emos, acc_2nd_emos)
+        print("acc of 1st half on {} is {}".format(sub_dir.split("_")[0], acc_1st_emos))
+        print("acc of 1st half on {} is {}".format(sub_dir.split("_")[1], acc_2nd_emos))
         acc_res[sub_dir] = (acc_1st_emos, acc_2nd_emos)
     return acc_res
 
@@ -438,7 +454,6 @@ def filter_pref_audio():
 
 def create_pref_dir(audio_gd_pref_dict):
     pass
-
 
 
 ###################### NOT USED ################
@@ -472,7 +487,7 @@ if __name__ == '__main__':
     # temp_Interp
     EVAL_TEMP_INTERP = False
     NEED_SYN_TEMPINTERP = False
-    SER_EVAL, PREF_EVAL, TEMP_CASE_EVAL = True, False, False
+    SER_EVAL, PREF_EVAL, TEMP_CASE_EVAL = False, False, False
 
     # freq_Interp
     EVAL_FREQ_INTERP = False
@@ -482,9 +497,10 @@ if __name__ == '__main__':
     if EVAL_NON_INTERP:
         # input
         p_unda, weight = (0.2, 0.8), (0.3, 0.7)
-        no_eval = Non_interp_eval(emos=("Angry", "Happy", "Sad"),
+        no_eval = Non_interp_eval(emos=("Angry", ),  # ("Angry", "Happy", "Sad")
                                   syn_models=("interpTTS", ),
-                                  need_syn=NEED_SYN
+                                  need_syn=NEED_SYN,
+                                  sub_model_type="crossAttn_f2b"  # linearAttn, crossAttn_f2b
                                   )
         # MCD
         no_eval.eval_by_mcd()
@@ -500,6 +516,7 @@ if __name__ == '__main__':
             res_acc = temp_eval.eval_by_SER(
                 paired_emos=("Angry_Sad", "Sad_Happy", "Angry_Happy"),
                 syn_models=("interpTTS",),
+                submodels="crossAttn_f2b",   # linearAttn, crossAttn_f2b
                 #syn_models=("fastspeech",),
                 need_syn=NEED_SYN_TEMPINTERP)
         if PREF_EVAL:

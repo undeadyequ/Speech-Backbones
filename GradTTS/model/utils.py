@@ -2,6 +2,11 @@
 
 import torch
 import torch.nn.functional as F
+import numpy as np
+import tgt
+import librosa
+import pyworld as pw
+
 
 def sequence_mask(length, max_length=None):
     if max_length is None:
@@ -45,7 +50,7 @@ def duration_loss(logw, logw_, lengths):
     return loss
 
 
-def align_a2b(a, tr_seq_len, attn):
+def align_a2b(a, tr_seq_len, attn=None):
     """
     align tensor a to b (tr_seq_len) by attn, if attn with wrong sr_len or tr_len, then
     1. padding when sr_len < tr_len
@@ -55,9 +60,9 @@ def align_a2b(a, tr_seq_len, attn):
         tr_seq_len:
         attn: (b, sr_len, tr_len)
     Returns:
-
+        b: (b, dim, tr_seq_len)
     """
-    # check whether length of x is same with psd
+    # Used in training ?
     if attn.shape[1] == a.shape[2] and attn.shape[2] == tr_seq_len:
         b = torch.matmul(a, attn)
     else:
@@ -66,13 +71,52 @@ def align_a2b(a, tr_seq_len, attn):
             left_pad = int((tr_seq_len - sr_seq_len) / 2)
             right_pad = tr_seq_len - left_pad - sr_seq_len
             p1d = (left_pad, right_pad)
-            #b = a.permute(0, 2, 1)
+            # b = a.permute(0, 2, 1)
             b = F.pad(a, p1d, "constant", 0)  # (b, word_len, 80) -> # (b, mel_len, 80)
-            #b = b.permute(0, 2, 1)
+            # b = b.permute(0, 2, 1)
             # psd = psd.unsqueeze(1)  # (b, 1, mel_len, 80)
         else:
             b = a[:, :, :tr_seq_len]
     return b
+
+
+def align_a2b_padcut(a, tr_seq_len):
+    if len(a.shape) == 4:
+        sr_seq_len = a.shape[-1]
+    elif len(a.shape) == 3:
+        sr_seq_len = a.shape[-1]
+    elif len(a.shape) == 2:
+        sr_seq_len = a.shape[-1]
+    else:
+        raise IOError("a shape {} is wrong".format(a.shape))
+
+    if tr_seq_len > sr_seq_len:
+        left_pad = int((tr_seq_len - sr_seq_len) / 2)
+        right_pad = tr_seq_len - left_pad - sr_seq_len
+        p1d = (left_pad, right_pad)
+        # b = a.permute(0, 2, 1)
+        b = F.pad(a, p1d, "constant", 0)  # (b, word_len, 80) -> # (b, mel_len, 80)
+        b_min, b_max = torch.min(b), torch.max(b)
+        # b = b.permute(0, 2, 1)
+        # psd = psd.unsqueeze(1)  # (b, 1, mel_len, 80)
+    else:
+        if len(a.shape) == 4:
+            b = a[:, :, :, :tr_seq_len]
+        elif len(a.shape) == 3:
+            b = a[:, :, :tr_seq_len]
+        else:
+            b = a[:, :tr_seq_len]
+    return b
+
+
+def cut_pad_start_end(ref_start, ref_end, sr_seq_len, tr_seq_len):
+    if tr_seq_len > sr_seq_len:
+        left_pad = int((tr_seq_len - sr_seq_len) / 2)
+        ref_start += left_pad
+        ref_end += left_pad
+    else:
+        ref_end = min(ref_end, tr_seq_len)
+    return ref_start, ref_end
 
 
 def align(
@@ -82,6 +126,7 @@ def align(
         condtype="noseq",
 ):
     """
+    Align sequential or scala condition given align_len
     a: (b, dim, sr_len)
     tr_seq_len:
     attn: (b, sr_len, tr_len)
@@ -97,9 +142,10 @@ def align(
     """
     if condtype == "seq":
         if align_att is not None:
-            cond_aligned = align_a2b(condition.transpose(1, 2),
-                                     align_len,
-                                     align_att.squeeze(1).transpose(1, 2))
+            cond_aligned = align_a2b(
+                condition.transpose(1, 2),
+                align_len,
+                align_att.squeeze(1).transpose(1, 2))
         else:
             print("attn_mtx should not be NONE!!")
         return cond_aligned
@@ -109,12 +155,6 @@ def align(
         print("wrong condtype!")
 
     return cond_aligned
-
-
-import numpy as np
-import tgt
-import librosa
-import pyworld as pw
 
 
 def get_alignment(tier, sampling_rate=16000, hop_length=256):

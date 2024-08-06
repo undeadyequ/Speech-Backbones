@@ -1,6 +1,8 @@
 import imageio
 images = []
 
+
+"""
 file_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/interpEmoTTS_frame2frameAttn/"
 file_id = "generated_enc_19_epoch"
 filenames = [
@@ -27,4 +29,6 @@ for filename in file_path:
     images.append(imageio.imread(filename))
 imageio.mimsave("{}.gif".format(file_dir + file_id), images, duration=0.2)
 
+
+"""
 

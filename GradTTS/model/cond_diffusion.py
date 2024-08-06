@@ -72,6 +72,13 @@ class CondDiffusion(BaseModule):
                                                  heads=heads,
                                                  p_uncond=p_uncond,
                                                  )
+
+    def diffuse_x0(self, x0, t):
+        time = t.unsqueeze(-1).unsqueeze(-1)
+        cum_noise = get_noise(time, self.beta_min, self.beta_max, cumulative=True)
+        xt = x0 * torch.exp(-0.5 * cum_noise)
+        return xt
+
     def forward_diffusion(self, x0, mask, mu, t):
         time = t.unsqueeze(-1).unsqueeze(-1)
         cum_noise = get_noise(time, self.beta_min, self.beta_max, cumulative=True)
@@ -95,7 +102,8 @@ class CondDiffusion(BaseModule):
                           emo_label=None,
                           align_len=None,
                           align_mtx=None,
-                          guidence_strength=3.0
+                          guidence_strength=3.0,
+                          attn_mask=None
                           ):
         """
         Given z, mu and conditioning (emolabel, psd, spk), denoise melspectrogram by ODE or SDE solver (stoc)
@@ -109,6 +117,7 @@ class CondDiffusion(BaseModule):
             spk:    (b, spk_emb) if exist else  NONE
             emo:    (b, emo_emb) if exist else  NONE
             psd:    (b, psd_dim, psd_len)   psd_len is not mel_len, psd_dim = 3 when eng/pitch/dur, psd=256 when wav2vector
+            melstyle: (b, ?, ?)
             emo_label: (b, 1, emo_n)
 
         Returns:
@@ -134,7 +143,8 @@ class CondDiffusion(BaseModule):
                 emo_label=emo_label,
                 align_len=align_len,
                 align_mtx=align_mtx,
-                guidence_strength=guidence_strength
+                guidence_strength=guidence_strength,
+                attn_mask=attn_mask
             )
             dxt_det = 0.5 * (mu - xt) - score_emo
 
@@ -377,7 +387,8 @@ class CondDiffusion(BaseModule):
                 emo_label=None,
                 align_len=None,
                 align_mtx=None,
-                guidence_strength=3.0
+                guidence_strength=3.0,
+                attn_mask=None
                 ):
         return self.reverse_diffusion(z=z,
                                       mask=mask,
@@ -390,7 +401,8 @@ class CondDiffusion(BaseModule):
                                       emo_label=emo_label,
                                       align_len=align_len,
                                       align_mtx=align_mtx,
-                                      guidence_strength=guidence_strength
+                                      guidence_strength=guidence_strength,
+                                      attn_mask=attn_mask
                                       )
 
     def loss_t(self,
@@ -432,7 +444,9 @@ class CondDiffusion(BaseModule):
                      emo_label=None,
                      align_len=None,
                      ):
-        t = torch.rand(x0.shape[0], dtype=x0.dtype, device=x0.device,
+        t = torch.rand(x0.shape[0],
+                       dtype=x0.dtype,
+                       device=x0.device,
                        requires_grad=False)
         t = torch.clamp(t, offset, 1.0 - offset)
         return self.loss_t(x0,
@@ -443,5 +457,4 @@ class CondDiffusion(BaseModule):
                            psd,
                            melstyle,
                            emo_label,
-                           align_len
-                           )
+                           align_len)

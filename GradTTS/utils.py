@@ -64,7 +64,7 @@ def plot_tensor(tensor):
     return data
 
 
-def save_plot(tensor, savepath):
+def save_plot(tensor, savepath, size=(12, 3)):
     plt.style.use('default')
     fig, ax = plt.subplots(figsize=(12, 3))
     im = ax.imshow(tensor, aspect="auto", origin="lower", interpolation='none')

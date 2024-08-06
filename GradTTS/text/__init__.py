@@ -19,6 +19,21 @@ def get_arpabet(word, dictionary):
         return word
 
 
+def text_to_arpabet(text, cleaner_names=["english_cleaners"], dictionary=None):
+    sequence = []
+    if dictionary is not None:
+        clean_text = _clean_text(text, cleaner_names)
+        clean_text = [get_arpabet(w, dictionary) for w in clean_text.split(" ")]
+        for i in range(len(clean_text)):
+            t = clean_text[i]
+            if t.startswith("{"):
+                sequence += t[1:-1].split(" ")
+            else:
+                sequence += " ".join(t)
+        return sequence
+    else:
+        return None
+
 def text_to_sequence(text, cleaner_names=["english_cleaners"], dictionary=None):
     '''Converts a string of text to a sequence of IDs corresponding to the symbols in the text.
 
@@ -41,7 +56,7 @@ def text_to_sequence(text, cleaner_names=["english_cleaners"], dictionary=None):
         if not m:
             clean_text = _clean_text(text, cleaner_names)
             if dictionary is not None:
-                clean_text = [get_arpabet(w, dictionary) for w in clean_text.split(" ")]
+                clean_text = [get_arpabet(w, dictionary) for w in clean_text.split(" ")]  # ?? forest! ??
                 for i in range(len(clean_text)):
                     t = clean_text[i]
                     if t.startswith("{"):

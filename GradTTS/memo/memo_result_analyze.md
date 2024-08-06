@@ -1,3 +1,21 @@
+- [Experiment Result (GradTTS\_IIV + ESD)](#experiment-result-gradtts_iiv--esd)
+  - [1. Audio conditioned on emotion and subemotion](#1-audio-conditioned-on-emotion-and-subemotion)
+  - [2. Interp between different emotion](#2-interp-between-different-emotion)
+  - [3. Iteration mel, audio](#3-iteration-mel-audio)
+- [Result Anglyze](#result-anglyze)
+  - [The Quality is not good](#the-quality-is-not-good)
+    - [More time step?](#more-time-step)
+  - [The emotion repr is not good](#the-emotion-repr-is-not-good)
+    - [controlling by subemotion OR Intonation curve?](#controlling-by-subemotion-or-intonation-curve)
+    - [](#)
+- [Benchmark](#benchmark)
+  - [GradTTS](#gradtts)
+  - [EmoDiff](#emodiff)
+  - [Comparation benchmark models](#comparation-benchmark-models)
+  - [Metric](#metric)
+    - [1. Emotion Representative](#1-emotion-representative)
+    - [2. Audio Quality](#2-audio-quality)
+
 # Experiment Result (GradTTS_IIV + ESD)
 
 ## 1. Audio conditioned on emotion and subemotion

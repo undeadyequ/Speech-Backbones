@@ -31,6 +31,7 @@ emo_num = {
     "Happy": 4
 }
 
+
 class TextMelDataset(torch.utils.data.Dataset):
     def __init__(self, filelist_path, cmudict_path, add_blank=True,
                  n_fft=1024, n_mels=80, sample_rate=22050,
@@ -486,3 +487,17 @@ class TextMelSpeakerEmoBatchCollate(object):
                     'spk': spk,
                     "emo": emo_emb,
                     }
+
+
+def get_mel(filepath,
+            spk=None,
+            preprocessed_path=None,
+            ):
+    mel_path = os.path.join(
+        preprocessed_path,
+        "mel",
+        "{}-mel-{}.npy".format(spk, filepath),
+    )
+    mel = torch.from_numpy(np.load(mel_path))
+    mel = torch.transpose(mel, 0, 1)
+    return mel

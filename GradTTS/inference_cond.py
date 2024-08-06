@@ -13,11 +13,11 @@ import os
 
 import numpy as np
 from scipy.io.wavfile import write
-
 import torch
+from typing import Union
 
 from model import GradTTS, CondGradTTS
-from text import text_to_sequence, cmudict
+from text import text_to_sequence, cmudict, text_to_arpabet
 from text.symbols import symbols
 from utils import intersperse
 
@@ -29,6 +29,10 @@ from pathlib import Path
 from model import GradTTS, CondGradTTS, CondGradTTSLDM
 import yaml
 from utils import get_emo_label
+from model.maskCreation import create_p2p_mask, DiffAttnMask
+from GradTTS.exp.util import get_ref_pRange, get_tgt_pRange
+from GradTTS.data import get_mel
+from GradTTS.utils import parse_filelist
 
 #HIFIGAN_CONFIG = './checkpts/hifigan-config.json'
 #HIFIGAN_CHECKPT = './checkpts/hifigan.pt'
@@ -85,6 +89,7 @@ def get_model(configs, model="gradtts_lm"):
     heads = model_config["unet"]["heads"]
     p_uncond = model_config["unet"]["p_uncond"]
 
+    """
     if model == "gradtts_lm":
         return CondGradTTSLDM(
             nsymbols,
@@ -105,7 +110,8 @@ def get_model(configs, model="gradtts_lm"):
             beta_max,
             pe_scale,
             att_type)
-    elif model == "gradtts_cross":
+    """
+    if model == "gradtts_cross":
         return CondGradTTS(nsymbols,
                             n_spks,
                             spk_emb_dim,
@@ -130,7 +136,6 @@ def get_model(configs, model="gradtts_lm"):
                             heads,
                             p_uncond)
 
-from typing import Union
 def load_model_state(checkpoint: Union[str, Path], model: torch.nn.Module, ngpu=1):
     ckpt_states = torch.load(
         checkpoint,
@@ -157,8 +162,13 @@ def inference(configs,
               emo_label=None,
               melstyle=None,
               out_dir=None,
-              guidence_strength=3.0
+              guidence_strength=3.0,
+              stoc=False,
+              output_pre="sample_"
               ):
+    """
+    Basic inference given txt, cond(spk, emo_label, melstyle)
+    """
 
     # Get model
     print('Initializing Grad-TTS...')
@@ -191,7 +201,7 @@ def inference(configs,
                                                        x_lengths,
                                                        n_timesteps=time_steps,
                                                        temperature=1.5,
-                                                       stoc=True,
+                                                       stoc=stoc,
                                                        spk=spk,
                                                        length_scale=0.91,
                                                        emo_label=emo_label,
@@ -203,9 +213,9 @@ def inference(configs,
                 y_enc, y_dec, attn = generator.forward(x,
                                                        x_lengths,
                                                        n_timesteps=time_steps,
-                                                       temperature=1.0,  # 1.5
-                                                       stoc=True,
-                                                       length_scale=1.0,  # 0.91
+                                                       temperature=1.5,    # 1.5
+                                                       stoc=stoc,
+                                                       length_scale=0.91,  # 0.91
                                                        spk=spk,
                                                        emo_label=emo_label,
                                                        melstyle=melstyle,
@@ -214,7 +224,135 @@ def inference(configs,
             t = (dt.datetime.now() - t).total_seconds()
             print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
             audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
-            write(f'{out_dir}/sample_{i}.wav', 22050, audio)
+            write(f'{out_dir}/{output_pre}{i}.wav', 22050, audio)
+    print('Done. Check out `out` folder for samples.')
+
+
+def inference_p2p_transfer_by_attnMask(
+        configs,
+        model_name,
+        chk_pt,
+        syn_txt=None,
+        time_steps=50,
+        spk=None,
+        emo_label=None,
+        melstyle=None,
+        out_dir=None,
+        guidence_strength=3.0,
+        stoc=False,
+        output_pre="sample_",
+        ref_p_start=5,
+        ref_p_end=8,
+        ref_id=None,
+        tgt_p_start=8,
+        tgt_p_end=9,
+        p2p_mode="noise"
+):
+    """
+    P2P transfer by adding cross attention mask where p2p area setting to 1.0
+
+    1. start and end phoneme of target speech
+    tgt_p_start = 8  # still 7 - 10 (8 9: till)  forest  18 - 26 (rest: 21 25)
+    tgt_p_end = 9  # ?? get it from x with 148? ??
+
+    2. start and end phoneme of reference speech
+    ref_p_start=5,
+    ref_p_end=8,
+    """
+
+    # Create p2p mask
+    # Get model
+    print('Initializing Grad-TTS...')
+    generator = get_model(configs, model_name)
+
+    load_model_state(chk_pt, generator)
+    _ = generator.cuda().eval()
+
+    print(f'Number of parameters: {generator.nparams}')
+    print('Initializing HiFi-GAN...')
+    with open(HIFIGAN_CONFIG) as f:
+        h = AttrDict(json.load(f))
+    vocoder = HiFiGAN(h)
+    vocoder.load_state_dict(torch.load(HIFIGAN_CHECKPT, map_location=lambda loc, storage: loc)['generator'])
+    _ = vocoder.cuda().eval()
+    vocoder.remove_weight_norm()
+
+    with open(syn_txt, 'r', encoding='utf-8') as f:
+        texts = [line.strip() for line in f.readlines()]
+
+    # Recheck transfer/target phonemes corresponding.
+    index_list = parse_filelist(ref_indx_dir + "/ref_index.txt")
+    ref_text = [text for basename, speaker, phone, text in index_list if basename == ref_id][0]
+    ref2_phnms = text_to_arpabet(ref_text, cleaner_names=["english_cleaners"], dictionary=cmu)  # ["p1", "p2"]
+    ref2_phnm = ref2_phnms[ref_p_start:ref_p_end]
+    print("reference phn[{}:{}]: {} <- {}".format(ref_p_start, ref_p_end, ref2_phnm, ref_text))
+    for i, text in enumerate(texts):
+        tgt_phnms = text_to_arpabet(text, cleaner_names=["english_cleaners"], dictionary=cmu)  # ["p1", "p2"]
+        tgt_phnm = tgt_phnms[tgt_p_start:tgt_p_end]
+        print("target phn[{}:{}]:{}  <- {}".format(tgt_p_start, tgt_p_end, tgt_phnm, text))  ## h e w i l <- w is 2
+
+    # Get frame-level transfering phoneme start/end on reference speech by textGrid
+    ref_pFrame_range = get_ref_pRange(ref_p_start, ref_p_end, ref_id)
+
+    # Get phoneme-level taget start/edn on target speech  <- big problem ?
+    tgt_p_start = tgt_p_start * 2
+    tgt_p_end = tgt_p_end * 2
+    tgt_pRange = (tgt_p_start, tgt_p_end)  # because adding 148 interpolated with x exp. 40 - 60  # should
+
+    if p2p_mode == "noise":
+        p2p_mask = None
+        ref2_y = get_mel(ref_id, ref_id.split("_")[0], mel_dir).cuda()
+        ref2_start_p = ref_pFrame_range[0]
+        ref2_end_p = ref_pFrame_range[1]
+    elif p2p_mode == "crossAttn":
+        ref2_y = None
+        ref2_start_p = None
+        ref2_end_p = None
+    else:
+        raise IOError("p2p model should be noise or crossAttn")
+
+    with torch.no_grad():
+        for i, text in enumerate(texts):
+            print(f'Synthesizing {i} text...', end=' ')
+            a = intersperse(text_to_sequence(text, dictionary=cmu), len(symbols))
+            x = torch.LongTensor(intersperse(text_to_sequence(text, dictionary=cmu), len(symbols))).cuda()[None]
+            x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
+            t = dt.datetime.now()
+
+            if p2p_mode == "crossAttn":
+                # create p2p mask
+                p2p_mask = create_p2p_mask(
+                    tgt_size=x.shape[1],
+                    ref_size=melstyle.shape[2],
+                    dims=4,
+                    tgt_range=tgt_pRange,
+                    ref_range=ref_pFrame_range
+                )
+                p2p_mask = p2p_mask.cuda()
+                # check start/end of 1 value in 2 dimensions.
+                print(p2p_mask[0, 0, tgt_pRange[0] - 2: tgt_pRange[0] + 2, :]) # masked=0, unmasked=1
+            y_enc, y_dec, attn = generator.reverse_diffusion_p2pStyleTransfer(
+                x,
+                x_lengths,
+                n_timesteps=time_steps,
+                temperature=1.5,    # 1.5
+                stoc=stoc,
+                length_scale=0.91,   # 0.91
+                spk=spk,
+                emo_label=emo_label,
+                melstyle=melstyle,
+                guidence_strength=guidence_strength,
+                attn_hardMask=p2p_mask,
+                ref2_y=ref2_y,
+                ref2_start_p=ref2_start_p,
+                ref2_end_p=ref2_end_p,
+                tgt_start_p=tgt_p_start,
+                tgt_end_p=tgt_p_end
+            )
+            t = (dt.datetime.now() - t).total_seconds()
+            print(f'Grad-TTS RTF: {t * 22050 / (y_dec.shape[-1] * 256)}')
+            audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
+            write(f'{out_dir}/{output_pre}{i}.wav', 22050, audio)
     print('Done. Check out `out` folder for samples.')
 
 
@@ -236,7 +374,8 @@ def inference_interp(
         mask_time_step=None,
         mask_all_layer=True,
         temp_mask_value=0,
-        guidence_strength=3.0
+        guidence_strength=3.0,
+        stoc=False
 ):
 
     # Get model
@@ -271,7 +410,7 @@ def inference_interp(
                                                    x_lengths,
                                                    n_timesteps=time_steps,
                                                    temperature=1.5,
-                                                   stoc=True,
+                                                   stoc=stoc,
                                                    spk=spk,
                                                    length_scale=0.91,
                                                    emo_label=emo_label1,
@@ -285,7 +424,7 @@ def inference_interp(
                 x_lengths,
                 n_timesteps=time_steps,
                 temperature=1.5,
-                stoc=True,
+                stoc=stoc,
                 length_scale=0.91,
                 spk=spk,
                 emo_label1=emo_label1,
@@ -311,17 +450,17 @@ def inference_interp(
 
 if __name__ == '__main__':
     # constant parameter
-    from const_param import emo_num_dict, emo_melstyle_dict, psd_dict, wav_dict
+    from const_param import emo_num_dict, emo_melstyle_dict, psd_dict, wav_dict, emo_melstyle_dict2
     from const_param import logs_dir_par, logs_dir, config_dir, melstyle_dir, psd_dir, wav_dir
 
     ## INPUT
     ### General
-    checkpoint = "grad_65.pt"
+    checkpoint = "grad_400.pt"  # grad_65
     chk_pt = logs_dir + "models/" + checkpoint
-    syn_txt = "resources/filelists/synthesis1.txt"
-    time_steps = 100
+    syn_txt = "resources/filelists/synthesis1_closetext_onlyOne.txt"
+    time_steps = 50
     model_name = "gradtts_cross"
-    speaker_id = 15
+    speaker_id = 19 # 15
     spk_tensor = torch.LongTensor([speaker_id]).cuda() if not isinstance(speaker_id, type(None)) else None
 
     ### Style
@@ -331,12 +470,13 @@ if __name__ == '__main__':
         melstyle_dir + "/" + emo_melstyle_dict[emo_label])).cuda()
     melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
     guidence_strength = 3.0
+    stoc = False
 
     preprocess_config = yaml.load(
         open(config_dir + "/preprocess_gradTTS.yaml", "r"), Loader=yaml.FullLoader
     )
     model_config = yaml.load(open(
-        config_dir + "/model_gradTTS_v2.yaml", "r"), Loader=yaml.FullLoader)
+        config_dir + "/model_gradTTS_v3.yaml", "r"), Loader=yaml.FullLoader)
     train_config = yaml.load(open(
         config_dir + "/train_gradTTS.yaml", "r"), Loader=yaml.FullLoader)
     configs = (preprocess_config, model_config, train_config)
@@ -363,10 +503,19 @@ if __name__ == '__main__':
     wav_sad = wav_dir + "/" + wav_dict["Sad"]
     wav_ang = wav_dir + "/" + wav_dict["Angry"]
 
+    # inference
+    mel_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD"
+    ref_indx_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/resources/filelists"
+
+
     NO_INTERPOLATION = False
     INTERPOLATE_INFERENCE_SIMP = False
+
+    # P2P transfer
+    P2P_TRANSFER = True
+
     # Temp
-    INTERPOLATE_INFERENCE_TEMP = True  # synthesize
+    INTERPOLATE_INFERENCE_TEMP = False  # synthesize
     INTERPOLATE_INFERENCE_TEMP_EMO_DETECT = False # evaluation emoTempInterp
 
     # Freq
@@ -400,7 +549,74 @@ if __name__ == '__main__':
                           emo_label=emo_label_tensor,
                           melstyle=melstyle_tensor,
                           out_dir=out_dir,
-                          guidence_strength=guidence_strength
+                          guidence_strength=guidence_strength,
+                          stoc=stoc
+                          )
+
+    if P2P_TRANSFER:
+        # conditions 1 (base style)
+        emo_label = "Sad"
+        emo_label_tensor = torch.LongTensor(get_emo_label(emo_label, emo_num_dict)).cuda()
+        melstyle_tensor = torch.from_numpy(np.load(
+            melstyle_dir + "/" + emo_melstyle_dict2[emo_label])).cuda()
+        melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
+
+        # conditions 2 (p-level style)
+        ref_id = "0019_000403"
+
+        # p2p (resource and target) phoneme index
+        ## still 7 - 10 (8 9: till) leave (10 11) forest  18 - 26 (rest: 21 25)
+        ## ?? get it from x with 148? ??
+        tgt_p_start, tgt_p_end = 7, 9  # need check
+        ref_p_start, ref_p_end = 7, 9  # till 6 7
+
+        # p2p mode
+        p2p_mode = "crossAttn"  # noise or crossAttn
+        random_seeds = 1   # v100: slight "still", v102, strong "still"
+
+        # Output
+        out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{speaker_id}_emo{emo_label}"
+        if not os.path.isdir(out_dir):
+            Path(out_dir).mkdir(exist_ok=True)
+
+        for i in [random_seeds]:
+            if True:
+                torch.manual_seed(random_seeds)
+                inference_p2p_transfer_by_attnMask(
+                    configs,
+                    model_name,
+                    chk_pt,
+                    syn_txt=syn_txt,
+                    time_steps=time_steps,
+                    spk=spk_tensor,
+                    emo_label=emo_label_tensor,
+                    melstyle=melstyle_tensor,
+                    out_dir=out_dir,
+                    guidence_strength=guidence_strength,
+                    stoc=stoc,
+                    ref_p_start=ref_p_start,
+                    ref_p_end=ref_p_end,
+                    ref_id=ref_id,
+                    tgt_p_start=tgt_p_start,
+                    tgt_p_end=tgt_p_end,
+                    p2p_mode=p2p_mode,
+                    output_pre="p2p_sample_v{}_".format(str(i))
+                )
+            if True:
+                # without p2p transfer
+                torch.manual_seed(random_seeds)
+                inference(configs,
+                          model_name,
+                          chk_pt,
+                          syn_txt=syn_txt,
+                          time_steps=time_steps,
+                          spk=spk_tensor,
+                          emo_label=emo_label_tensor,
+                          melstyle=melstyle_tensor,
+                          out_dir=out_dir,
+                          guidence_strength=guidence_strength,
+                          stoc=stoc,
+                          output_pre="no_p2p_sample_v{}_".format(str(i))
                           )
 
     if INTERPOLATE_INFERENCE_SIMP:
@@ -424,8 +640,8 @@ if __name__ == '__main__':
             melstyle2=melstyle_ang,
             out_dir=out_dir,
             interp_type=interp_type,
-            guidence_strength=guidence_strength
-
+            guidence_strength=guidence_strength,
+            stoc=stoc
         )
 
         # 1. interpolate score
@@ -476,7 +692,8 @@ if __name__ == '__main__':
             mask_time_step=mask_time_step,
             mask_all_layer=mask_all_layer,
             temp_mask_value=temp_mask_value,
-            guidence_strength=guidence_strength
+            guidence_strength=guidence_strength,
+            stoc=stoc
         )
 
     if INTERPOLATE_INFERENCE_FREQ:
@@ -510,6 +727,7 @@ if __name__ == '__main__':
             mask_time_step=mask_time_step,
             mask_all_layer=mask_all_layer,
             temp_mask_value=temp_mask_value,
-            guidence_strength=guidence_strength
+            guidence_strength=guidence_strength,
+            stoc=stoc
         )
 

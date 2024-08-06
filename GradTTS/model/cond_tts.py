@@ -17,7 +17,8 @@ from GradTTS.model.diffusion import Diffusion, Mish
 from GradTTS.model.cond_diffusion import CondDiffusion
 from GradTTS.model.utils import sequence_mask, generate_path, duration_loss, fix_len_compatibility
 from GradTTS.model.utils import (sequence_mask, generate_path, duration_loss,
-                                 fix_len_compatibility, align_a2b, align)
+                                 fix_len_compatibility, align_a2b, align, align_a2b_padcut, cut_pad_start_end)
+from GradTTS.model.maskCreation import create_p2p_mask, DiffAttnMask
 
 ADD_COND_TO_ENC = True
 USE_MUY = True
@@ -73,6 +74,36 @@ class CondGradTTS(BaseModule):
         self.melstyle_mlp = torch.nn.Sequential(torch.nn.Linear(melstyle_n, melstyle_n), Mish(),
                                            torch.nn.Linear(melstyle_n, n_feats))
 
+    def predict_prior(self,
+                      x,
+                      x_lengths,
+                      spk,
+                      length_scale
+                      ):
+        """
+        Predict prior (mu_y) from x by encoder which encoder x to mu_x while predict logw.
+        """
+        # Get mu_x and logw (log-scaled token durations)
+        mu_x, logw, x_mask = self.encoder(x, x_lengths, spk)
+        w = torch.exp(logw) * x_mask
+        w_ceil = torch.ceil(w) * length_scale
+
+        # Get y_lengths (predicted mel len) from logw
+        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
+        y_max_length = int(y_lengths.max())
+        y_max_length_ = fix_len_compatibility(y_max_length)
+
+        # construct attn (alignment map ) by y_mask (predicted mel len) and x_mask
+        y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(x_mask.dtype)
+        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
+        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)
+
+        # Get mu_y by attnb and mu_x
+        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
+        mu_y = mu_y.transpose(1, 2)
+
+        return mu_y, y_mask, y_max_length, attn, attn_mask
+
     @torch.no_grad()
     def forward(self,
                 x,
@@ -85,7 +116,8 @@ class CondGradTTS(BaseModule):
                 psd=None,
                 emo_label=None,
                 melstyle=None,
-                guidence_strength=3.0
+                guidence_strength=3.0,
+                attn_hardMask=None
                 ):
         """
         Generates mel-spectrogram by encoder, decoder, from text. Returns:
@@ -104,6 +136,7 @@ class CondGradTTS(BaseModule):
                 Usually, does not provide synthesis improvements.
             length_scale (float, optional): controls speech pace.
                 Increase value to slow down generated speech and vice versa.
+            attn_hardMask: [b,1], [c,1], l_q, [l_k, 1]
         """
         x, x_lengths = self.relocate_input([x, x_lengths])
 
@@ -116,30 +149,25 @@ class CondGradTTS(BaseModule):
         if melstyle is not None:
             melstyle = self.melstyle_mlp(melstyle.transpose(1, 2))
 
-        # Get `mu_x` and `logw` (log-scaled token durations)
-        mu_x, logw, x_mask = self.encoder(x, x_lengths, spk)
-        w = torch.exp(logw) * x_mask
-        w_ceil = torch.ceil(w) * length_scale
-
-        # Get y_lengths (predicted mel len) from logw
-        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
-        y_max_length = int(y_lengths.max())
-        y_max_length_ = fix_len_compatibility(y_max_length)
-
-        # construct `attn` (alignment map ) by y_mask (predicted mel len) and x_mask
-        y_mask = sequence_mask(y_lengths, y_max_length_).unsqueeze(1).to(x_mask.dtype)
-        attn_mask = x_mask.unsqueeze(-1) * y_mask.unsqueeze(2)
-        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1)).unsqueeze(1)
-
-        # Get mu_y by attnb and mu_x
-        mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2))
-        mu_y = mu_y.transpose(1, 2)
+        # get prior
+        mu_y, y_mask, y_max_length, attn, attn_mask = self.predict_prior(x, x_lengths, spk, length_scale)
         encoder_outputs = mu_y[:, :, :y_max_length]
 
         # Get sample latent representation from terminal distribution N(mu_y, I)
-        z = mu_y + torch.randn_like(mu_y, device=mu_y.device) / temperature
-        # Generate sample by performing reverse dynamics
+        variance = torch.randn_like(mu_y, device=mu_y.device) / temperature
+        z = mu_y + variance
 
+        if attn_hardMask is not None:
+            #attn_hardMask_max = torch.max(attn_hardMask)
+            attn_hardMask = torch.ones_like(attn_hardMask) - attn_hardMask
+            attn_hardMask = torch.matmul(attn.transpose(2, 3), attn_hardMask)  # (1,1, mu_y/l_q, l_k)
+            attn_hardMask = attn_hardMask.unsqueeze(3).repeat(1, 1, 1, 80, 1)  # (1,1, l_q, 80, l_k)
+            attn_hardMask = attn_hardMask.view(1, 1, -1, attn_hardMask.shape[-1]) # (1,1, l_q * 80, l_k)
+            #attn_hardMask_max = torch.max(attn_hardMask)
+            attn_hardMask = attn_hardMask>0
+            attn_hardMask = ~attn_hardMask
+
+        # Generate sample by performing reverse dynamics
         decoder_outputs = self.decoder(z,
                                        y_mask,
                                        mu_y,
@@ -151,10 +179,142 @@ class CondGradTTS(BaseModule):
                                        emo_label=emo_label,
                                        align_len=mu_y.shape[-1],
                                        align_mtx=attn,
-                                       guidence_strength=guidence_strength
+                                       guidence_strength=guidence_strength,
+                                       attn_mask=attn_hardMask
                                        )
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
+
+    @torch.no_grad()
+    def reverse_diffusion_p2pStyleTransfer(
+            self,
+            x,
+            x_lengths,
+            n_timesteps,
+            temperature=1.0,
+            stoc=False,
+            spk=None,
+            length_scale=1.0,
+            emo_label=None,
+            melstyle=None,
+            guidence_strength=3.0,
+            attn_hardMask=None,
+            ref2_y=None,
+            ref2_start_p=None,
+            ref2_end_p=None,
+            tgt_start_p=None,
+            tgt_end_p=None
+    ):
+        """
+        Reverse diffusion process with phoneme2phoneme style transfer given 2 mode:
+        1. noise mode (ref2_y is not null)
+            mu_y = f(x)[,,, tgt_start:tgt_end] <- diffuse(ref2_y)[..., ref_start:ref_end]
+            z = mu_y + norm
+            mu_y = f(x)[,,, tgt_start:tgt_end]
+            z = mu_y + norm <- mu_y + norm[..., !tgt_start:tgt_end] + diffuse(ref2_y)[..., ref_start:ref_end]
+
+        2. crossAttn mode (attn_hardMask is not null)
+            mu_y = f(x)
+            z = mu_y * norm
+            attn_map = attn_map * attn_hardMask
+
+        reversion diffusion
+            dXt = (mu_y - xt - s(xt, u, t))bt * dt + bt^2 * dwt
+            x(T-1) = mu_y + noise(xT)
+            X(T-2) = x(T-1) + noise(x(T-1))
+        Args:
+        Returns:
+        """
+        x, x_lengths = self.relocate_input([x, x_lengths])
+
+        # Embed condition
+        if spk is not None:
+            spk = self.spk_mlp(self.spk_emb(spk))
+        if emo_label is not None:
+            emo_label = emo_label.to(torch.float)
+            emo_label = self.emo_mlp(emo_label)   # (b, 1, 80)
+        if melstyle is not None:
+            melstyle = self.melstyle_mlp(melstyle.transpose(1, 2))
+
+        # get prior (mu_y1) from x
+        mu_y1, y1_mask, y1_max_length, attn1, attn1_mask = self.predict_prior(x, x_lengths, spk, length_scale)
+        encoder_outputs = mu_y1[:, :, :y1_max_length]  # ?? Needed ??
+
+        # p2p_mode == crossAttn
+        if attn_hardMask is not None:
+            ## reshape size of attn_hardMask (same as mu_x) to size of mu_y by attention
+            ## p2p mask (mu_x_len * ref_pFrame_len)
+            ## align p2p mask to (mu_y_len * ref_pFrame_len)
+            attn_hardMask = torch.ones_like(attn_hardMask) - attn_hardMask
+            attn_hardMask = torch.matmul(attn1.transpose(2, 3), attn_hardMask)  # (1,1, mu_y/l_q, l_k)
+            attn_hardMask = attn_hardMask.unsqueeze(3).repeat(1, 1, 1, 80, 1)  # (1,1, l_q, 80, l_k)
+            attn_hardMask = attn_hardMask.view(1, 1, -1, attn_hardMask.shape[-1])  # (1,1, l_q * 80, l_k)
+            # attn_hardMask_max = torch.max(attn_hardMask)
+            attn_hardMask = attn_hardMask > 0
+            attn_hardMask = ~attn_hardMask
+
+        # p2p_mode == noise
+        if ref2_y is not None:
+            # diffusing ref2_y
+            offset = 1e-2
+            t_T = torch.ones(
+                mu_y1.shape[0],
+                dtype=mu_y1.dtype,
+                device=mu_y1.device)
+            t_T = torch.clamp(t_T, offset, 1.0 - offset)
+            ref2_y = align_a2b_padcut(ref2_y, mu_y1.shape[2])
+            diffused_ref2 = self.decoder.diffuse_x0(ref2_y, t_T)
+
+            ## Align frame-level ref2_start/end_p to mu_y1 (as ref2 should same with mu_y1 for diffusing)
+            ref2_start_p_mod, ref2_end_p_mod = cut_pad_start_end(ref2_start_p, ref2_end_p,
+                                                                 sr_seq_len=ref2_y.shape[2] if len(ref2_y.shape) == 3 else ref2_y.shape[1],
+                                                                 tr_seq_len=mu_y1.shape[2])
+            # Align phoneme-level tgt_start/end_p to mu_y1 (as mu_x is converted to mu_y)  ?? How to ??
+            tgt_start_p_mod, tgt_end_p_mod = get_first_last_nonZero(attn1, tgt_start_p, tgt_end_p)
+
+            # Guarantee tgt range to same as ref range
+            tgt_p_mod_range = tgt_end_p_mod - tgt_start_p_mod
+            ref2_p_mod_range = ref2_end_p_mod - ref2_start_p_mod
+            if tgt_p_mod_range != ref2_p_mod_range:
+                tgt_end_p_mod = tgt_start_p_mod + ref2_p_mod_range
+
+            # (Check) -> should be similar to norm distr
+            #dr_min, dr_max = torch.min(diffused_ref2), torch.max(diffused_ref2)
+
+            # guarantee ref2 phoneme is not cut
+            if ref2_end_p > mu_y1.shape[2]:
+                raise IOError("The ref2_start {} and ref2_end {} should not be greater than given mu_y {}".format(
+                    ref2_start_p_mod, ref2_end_p_mod, mu_y1.shape[2]))
+            #mu_y1[:, :, ref2_start_p:ref2_end_p] = diffused_y2[:, :, ref2_start_p:ref2_end_p]  # (b, 80, L)
+
+            # initiate normal noise N(mu_y, I)
+            variance = torch.randn_like(mu_y1, device=mu_y1.device) / temperature
+            # insert p2p noise
+            variance[:, :, tgt_start_p_mod:tgt_end_p_mod] = diffused_ref2[:, :, ref2_start_p_mod:ref2_end_p_mod]  # (b, 80, L)
+            #variance[:, :, tgt_start_p_mod:tgt_end_p_mod] = torch.tensor(0.1, device=variance.device)
+
+            # variance[:, :, ref2_start_p:ref2_end_p] = diffused_ref2[:, :, ref2_start_p:ref2_end_p]  # (b, 80, L)
+        else:  # p2p_mode is crossAttn
+            variance = torch.randn_like(mu_y1, device=mu_y1.device) / temperature
+
+        z = mu_y1 + variance
+        # Generate sample by performing reverse dynamics
+        decoder_outputs = self.decoder(z,
+                                       y1_mask,
+                                       mu_y1,
+                                       n_timesteps,
+                                       stoc=stoc,
+                                       spk=spk,
+                                       psd=psd,
+                                       melstyle=melstyle,
+                                       emo_label=emo_label,
+                                       align_len=mu_y1.shape[-1],
+                                       align_mtx=attn1,
+                                       guidence_strength=guidence_strength,
+                                       attn_mask=attn_hardMask)
+
+        decoder_outputs = decoder_outputs[:, :, :y1_max_length]
+        return encoder_outputs, decoder_outputs, attn1[:, :, :y1_max_length]
 
     #@torch.no_grad()
     def reverse_diffusion_interp(self,
@@ -263,7 +423,7 @@ class CondGradTTS(BaseModule):
         """
         x, x_lengths, y, y_lengths = self.relocate_input([x, x_lengths, y, y_lengths])
 
-        # Embed condition !!
+        # spk, emo, mel_style embed condition
         if spk is not None:
             spk = self.spk_mlp(self.spk_emb(spk))
         if emo_label is not None:
@@ -272,7 +432,7 @@ class CondGradTTS(BaseModule):
         if melstyle is not None:
             melstyle = self.melstyle_mlp(melstyle.transpose(1, 2))
 
-        # Get `mu_x` and `logw` (log-scaled token durations)
+        # Get mu_x (encoded x) and logw (log-scaled token durations)
         mu_x, logw, x_mask = self.encoder(x, x_lengths, spk)
         y_max_length = y.shape[-1]
         y_mask = sequence_mask(y_lengths, y_max_length).unsqueeze(1).to(x_mask)
@@ -304,7 +464,7 @@ class CondGradTTS(BaseModule):
         )
         """
         # Align melstyle to mu_y length
-        melstyle_align = align(melstyle, y.shape[-1], attn, condtype="seq")
+        melstyle_align = align_a2b_padcut(melstyle, y.shape[-1], attn, condtype="seq")
         #melstyle_mask = y_mask
 
         # Cut a small segment of mel-spectrogram (to increase batch size)
@@ -415,6 +575,7 @@ class CondGradTTS(BaseModule):
         return enc_hid_cond, enc_hids_mask
     """
 
+
 def get_cut_range_x(attn, cut_lower, cut_upper):
     cut_lower_x = (attn[:, cut_lower] == 1).nonzero(as_tuple=False)
     cut_upper_x = (attn[:, cut_upper-1] == 1).nonzero(as_tuple=False)
@@ -427,3 +588,23 @@ def get_cut_range_x(attn, cut_lower, cut_upper):
     cut_upper_x = cut_upper_x[0][0]
     #print("cut_lower_x, cut_upper_x:{}, {}".format(cut_lower_x, cut_upper_x))
     return cut_lower_x, cut_upper_x
+
+
+def get_first_last_nonZero(x2y_attn, x_index_start, x_index_end):
+    """
+    get y_index at x2y_attn[x_index, :] where is the first/last nonzero.
+    Args:
+        x2y_attn (1, 1, x_len, y_len):
+        x_index_start:
+        x_index_end:
+    Returns:
+
+    """
+    if len(x2y_attn.shape) == 4 and x2y_attn.shape[0] == 1 and x2y_attn.shape[1] == 1:
+        y_nonzero_index_start = (x2y_attn[0, 0, x_index_start, :] == 1).nonzero(as_tuple=True)
+        y_nonzero_index_start = y_nonzero_index_start[0][0]  # 0: 3rd dim, 0: first nonzero
+        y_nonzero_index_end = (x2y_attn[0, 0, x_index_end, :] == 1).nonzero(as_tuple=True)
+        y_nonzero_index_end = y_nonzero_index_end[0][-1] # 0: 3rd dim, 0: last nonzero
+    else:
+        raise IOError("x2y_attn should have 4 dims and 1 length for first two dims!")
+    return y_nonzero_index_start, y_nonzero_index_end

@@ -7,8 +7,6 @@
   - [4. INTERPOLATE\_INFERENCE\_FREQ](#4-interpolate_inference_freq)
 - [Experiment result: log](#experiment-result-log)
 - [Expriment code; exp](#expriment-code-exp)
-  - [exp\_main.py](#exp_mainpy)
-  - [TodoList](#todolist)
 
 
 # Train model
@@ -56,27 +54,5 @@
 
 
 ## 4. INTERPOLATE_INFERENCE_FREQ
-
-
 # Experiment result: log
 # Expriment code; exp
-## exp_main.py
-- non_interp
-  - mcd/mos/smos
-  - prosodic feature chagning along time 
-- temp_interp
-  - ser_eval: emo accuracy on 1/2 parts of speech
-  - 2 emotion accuracy changing along time
-  - prosodic feature chagning along time
-- freq_interp
-  - ?
-
-
-
-## TodoList
-- create evaluation data -> syn_eval_data.py
-- get mcd
-- clear error in inference
-- get evaluation result
-  - visualization
-

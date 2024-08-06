@@ -1,13 +1,8 @@
-1. Restore model
-2. Model (X_T = u)
-   1. Encoder
-   2. Decoder
-      - Score Estimator
-        - Estimator(Energy/Pitch + Emotion Label) -> CrossNet: E(Q: K,V=())
-        - 
-3. load pitch, energy, duration
-4. Model Paramater
-
+- [Cross attention](#cross-attention)
+- [Score function of gradTTS](#score-function-of-gradtts)
+- [Quesition](#quesition)
+  - [Condition and sample (Diffuser)](#condition-and-sample-diffuser)
+  - [Condition and sample (Origin)](#condition-and-sample-origin)
 
 ## Cross attention
 - K,V = Style
@@ -19,7 +14,7 @@
 - Concatenation of input
   - t, x:  embed sepeartedly and concate.
   - spk, hidden, mu, xt: Directly concate to x
-![unet_arch](img/unet_arch.png)
+![unet_arch](../img/unet_arch.png)
 
 
 

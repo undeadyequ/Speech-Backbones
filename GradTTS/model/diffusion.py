@@ -11,6 +11,8 @@ import torch
 from einops import rearrange
 
 from model.base import BaseModule
+import matplotlib.pyplot as plt
+from GradTTS.utils import save_plot
 
 
 class Mish(BaseModule):
@@ -106,7 +108,7 @@ class LinearAttention(BaseModule):
         k = k.softmax(dim=-1)
         context = torch.einsum('bhdn,bhen->bhde', k, v)
         out = torch.einsum('bhde,bhdn->bhen', context, q)
-        out = rearrange(out, 'b heads c (h w) -> b (heads c) h w', 
+        out = rearrange(out, 'b heads c (h w) -> b (heads c) h w',
                         heads=self.heads, h=h, w=w)
         return self.to_out(out), context
 
@@ -133,7 +135,7 @@ class MultiAttention2(BaseModule):
             input_Q: (b, c, d_q, l_q)   c = dim_in_q
             key:    (b, d_k, l_k)       d_k = dim_in_k
             value:  (b, d_k, l_k)
-            attn_mask: Mask attention score map for interpolation.
+            attn_mask: ([b,1], [c,1], d_q * l_q, [l_k, 1]) Mask attention score map for interpolation.
         Returns:
             out:  (b, c, d_q, l_q)
         """
@@ -159,9 +161,11 @@ class MultiAttention2(BaseModule):
             [context[:, i, :, :] for i in range(context.size(1))], dim=-1)   # (b, d_q * l_q, d_m * h)  # why not use view
 
         output = self.to_out(context)    # -> (b, d_q * l_q, c)
-        output = output + residual       # -> (b, d_q * l_q, c)  # There are 2 residual
 
-        if attn_mask is not None:        # Mask on output+1st residual
+        #output = output + residual       # -> (b, d_q * l_q, c)  # There are 2 residual
+
+        # Only used in temporary interpolation
+        if attn_mask is not None and attn_mask.shape[-1] == 1:        # Mask on output+1st residual
             attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1)   # return this for mask on 2nd residual
             output = output.masked_fill(attn_mask_nohead, mask_value)
         else:
@@ -263,6 +267,7 @@ class MultiAttention3(BaseModule):
         else:
             return output, attn
 
+
 class ScaledDotProductionAttention(BaseModule):
     def __init__(self, dropout: float = None, scale: bool = True):
         super(ScaledDotProductionAttention, self).__init__()
@@ -291,6 +296,14 @@ class ScaledDotProductionAttention(BaseModule):
         attn = self.softmax(attn)
         if att_mask is not None:
             attn = attn.masked_fill(att_mask, mask_value)  # Do mask after softmax
+            # set attn score to 1.0 in area
+            #ref_no_zero_num = torch.max((attn > 0).sum(dim=0))
+            attn_hard_label = 1.0  # 32s
+            attn = torch.where(attn > 0, attn_hard_label, 0.0001).cuda()
+            # CHECK: attn[:, :, tgt[0]*80 : tgt[1]*80, ref[0]:ref[1]] == attn_hard_label (zero for expt)
+            #tmp = torch.sum(attn, dim=-1)
+            #torch.set_printoptions(threshold=10_000)
+            #print(tmp[0, 0, :])
         if self.dropout is not None:
             attn = self.dropout(attn)
         output = torch.einsum('bhqk,bhkd->bhqd', attn, v)
@@ -326,15 +339,15 @@ class Residual(BaseModule):
     def forward(self, x, *args, **kwargs):
         output = self.fn(x, *args, **kwargs)
         if type(output) is tuple and len(output) >= 2:
-            if len(output) == 3:
+            if len(output) == 3:  # only used in temporary mix
                 attn_mask = output[2]
-                #b, c, m, l = output[0].shape
-                #attn_mask = attn_mask.view(b, -1, l, m).transpose(2, 3)  # ?? ad hoc
+                b, c, m, l = output[0].shape
+                attn_mask = attn_mask.view(b, -1, l, m).transpose(2, 3)  # ?? ad hoc
                 #attn_mask = attn_mask.unsqueeze(2).transpose(1, 3)
                 x = x.masked_fill(attn_mask, 0)
-            return output[0] + x, output[1]
+            return output[0] + x, output[1]     # used p2p mix
         else:
-            return output + x
+            return output + x  # no interpolation
 
         
 class SinusoidalPosEmb(BaseModule):

@@ -99,8 +99,11 @@ def synthesize_by_noInterp(emos=("Angry", "Sad", "Happy"),
             pass
 
 
+
+
 def synthesize_by_tempInterp(
         paired_emos=("Angry_Sad", "Sad_Happy", "Angry_Happy"),
+        emoStyle_dict=dict(),
         syn_models=("interpTTS", "emodiff", "fastspeech"),
         eval_interp_dir="",
         configs=None,
@@ -128,9 +131,9 @@ def synthesize_by_tempInterp(
                 emo1, emo2 = pair_emo.split("_")
                 emo_label1 = torch.LongTensor(get_emo_label(emo1)).cuda()
                 emo_label2 = torch.LongTensor(get_emo_label(emo2)).cuda()
-                melstyle1 = (torch.from_numpy(np.load(melstyle_dir + "/" + emo_melstyle_dict[emo1])).
+                melstyle1 = (torch.from_numpy(np.load(melstyle_dir + "/" + emoStyle_dict[emo1])).
                              unsqueeze(0).transpose(1, 2).cuda())
-                melstyle2 = (torch.from_numpy(np.load(melstyle_dir + "/" + emo_melstyle_dict[emo2])).
+                melstyle2 = (torch.from_numpy(np.load(melstyle_dir + "/" + emoStyle_dict[emo2])).
                              unsqueeze(0).transpose(1, 2).cuda())
 
                 # create subdir
@@ -263,7 +266,7 @@ def get_configs(model_name, logs_dir):
         chk_pt = logs_dir + checkpoint
 
         # text
-        syn_txt = "../resources/filelists/synthesis3.txt"
+        syn_txt = "../resources/filelists/synthesis_obj.txt"
 
         # inference related
         time_steps = 100
