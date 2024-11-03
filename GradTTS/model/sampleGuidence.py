@@ -9,7 +9,7 @@ from GradTTS.model.base import BaseModule
 import math
 from einops import rearrange, repeat
 
-from GradTTS.model.estimators import GradLogPEstimator2dCond
+from GradTTS.model.estimators_v2 import GradLogPEstimator2dCond
 import librosa
 from GradTTS.model.utils import extract_pitch
 

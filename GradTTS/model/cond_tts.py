@@ -186,27 +186,34 @@ class CondGradTTS(BaseModule):
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
 
     @torch.no_grad()
-    def reverse_diffusion_p2pStyleTransfer(
+    def reverse_diffusion_mix(
             self,
             x,
             x_lengths,
             n_timesteps,
             temperature=1.0,
             stoc=False,
-            spk=None,
             length_scale=1.0,
-            emo_label=None,
-            melstyle=None,
+            mix_mode="noise",
+
+            spk1=None,
+            emo_label1=None,
+            melstyle1=None,
+            attn_hardMask1=None,
+
+            spk2=None,
+            emo_label2=None,
+            melstyle2=None,
+            attn_hardMask2=None,
+
             guidence_strength=3.0,
-            attn_hardMask=None,
-            ref2_y=None,
             ref2_start_p=None,
             ref2_end_p=None,
             tgt_start_p=None,
-            tgt_end_p=None
+            tgt_end_p=None,
     ):
         """
-        Reverse diffusion process with phoneme2phoneme style transfer given 2 mode:
+        Reverse diffusion process with phoneme2phoneme style transfer given 2 mode (mix_mode):
         1. noise mode (ref2_y is not null)
             mu_y = f(x)[,,, tgt_start:tgt_end] <- diffuse(ref2_y)[..., ref_start:ref_end]
             z = mu_y + norm
@@ -228,33 +235,41 @@ class CondGradTTS(BaseModule):
         x, x_lengths = self.relocate_input([x, x_lengths])
 
         # Embed condition
-        if spk is not None:
-            spk = self.spk_mlp(self.spk_emb(spk))
-        if emo_label is not None:
-            emo_label = emo_label.to(torch.float)
-            emo_label = self.emo_mlp(emo_label)   # (b, 1, 80)
-        if melstyle is not None:
-            melstyle = self.melstyle_mlp(melstyle.transpose(1, 2))
+        spk1 = self.spk_mlp(self.spk_emb(spk1))
+        emo_label1 = self.emo_mlp(emo_label1.to(torch.float))   # (b, 1, 80)
+        melstyle1 = self.melstyle_mlp(melstyle1.transpose(1, 2))
+
+        spk2 = self.spk_mlp(self.spk_emb(spk2))
+        emo_label2 = self.emo_mlp(emo_label2.to(torch.float))  # (b, 1, 80)
+        melstyle2 = self.melstyle_mlp(melstyle2.transpose(1, 2))
 
         # get prior (mu_y1) from x
-        mu_y1, y1_mask, y1_max_length, attn1, attn1_mask = self.predict_prior(x, x_lengths, spk, length_scale)
+        mu_y1, y1_mask, y1_max_length, attn1, attn1_mask = self.predict_prior(x, x_lengths, spk1, length_scale)  # ?? Need spk1 ??
         encoder_outputs = mu_y1[:, :, :y1_max_length]  # ?? Needed ??
 
-        # p2p_mode == crossAttn
-        if attn_hardMask is not None:
-            ## reshape size of attn_hardMask (same as mu_x) to size of mu_y by attention
-            ## p2p mask (mu_x_len * ref_pFrame_len)
-            ## align p2p mask to (mu_y_len * ref_pFrame_len)
-            attn_hardMask = torch.ones_like(attn_hardMask) - attn_hardMask
-            attn_hardMask = torch.matmul(attn1.transpose(2, 3), attn_hardMask)  # (1,1, mu_y/l_q, l_k)
-            attn_hardMask = attn_hardMask.unsqueeze(3).repeat(1, 1, 1, 80, 1)  # (1,1, l_q, 80, l_k)
-            attn_hardMask = attn_hardMask.view(1, 1, -1, attn_hardMask.shape[-1])  # (1,1, l_q * 80, l_k)
-            # attn_hardMask_max = torch.max(attn_hardMask)
-            attn_hardMask = attn_hardMask > 0
-            attn_hardMask = ~attn_hardMask
+        ## 1. Reshape size of attn_hardMask (mu_x * ref_pFrame_len) to (80 * mu_y, ref_pFrame_len) by attention map
+        ## 2. Change 1 to Boolen
+        attn_hardMask = torch.ones_like(attn_hardMask1) - attn_hardMask1
+        attn_hardMask = torch.matmul(attn1.transpose(2, 3), attn_hardMask)  # (1,1, mu_y/l_q, l_k)
+        attn_hardMask = attn_hardMask.unsqueeze(3).repeat(1, 1, 1, 80, 1)  # (1,1, l_q, 80, l_k)
+        attn_hardMask = attn_hardMask.view(1, 1, -1, attn_hardMask.shape[-1])  # (1,1, l_q * 80, l_k)
+        # attn_hardMask_max = torch.max(attn_hardMask)
+        attn_hardMask = attn_hardMask > 0
+
+        # tempt check
+        #attn_hardMask = attn_hardMask > -100 # all true
+
+        attn_hardMask1 = attn_hardMask   # transfer phone = True
+        attn_hardMask2 = ~attn_hardMask  # transfer phone = False
+
+
+        torch.set_printoptions(threshold=100000)
+        #print("if there is true")
+        #print((attn_hardMask1[0, 0, :, :]==True).nonzero(as_tuple=True))
+        #print(attn_hardMask1[0, 0, :, :])
 
         # p2p_mode == noise
-        if ref2_y is not None:
+        if mix_mode == "noise":
             # diffusing ref2_y
             offset = 1e-2
             t_T = torch.ones(
@@ -262,13 +277,16 @@ class CondGradTTS(BaseModule):
                 dtype=mu_y1.dtype,
                 device=mu_y1.device)
             t_T = torch.clamp(t_T, offset, 1.0 - offset)
-            ref2_y = align_a2b_padcut(ref2_y, mu_y1.shape[2])
+            ref2_y = align_a2b_padcut(melstyle2, mu_y1.shape[2])
             diffused_ref2 = self.decoder.diffuse_x0(ref2_y, t_T)
 
             ## Align frame-level ref2_start/end_p to mu_y1 (as ref2 should same with mu_y1 for diffusing)
-            ref2_start_p_mod, ref2_end_p_mod = cut_pad_start_end(ref2_start_p, ref2_end_p,
-                                                                 sr_seq_len=ref2_y.shape[2] if len(ref2_y.shape) == 3 else ref2_y.shape[1],
-                                                                 tr_seq_len=mu_y1.shape[2])
+            ref2_start_p_mod, ref2_end_p_mod = cut_pad_start_end(
+                ref2_start_p, ref2_end_p,
+                sr_seq_len=ref2_y.shape[2]
+                if len(ref2_y.shape) == 3
+                else ref2_y.shape[1], tr_seq_len=mu_y1.shape[2]
+            )
             # Align phoneme-level tgt_start/end_p to mu_y1 (as mu_x is converted to mu_y)  ?? How to ??
             tgt_start_p_mod, tgt_end_p_mod = get_first_last_nonZero(attn1, tgt_start_p, tgt_end_p)
 
@@ -299,22 +317,26 @@ class CondGradTTS(BaseModule):
 
         z = mu_y1 + variance
         # Generate sample by performing reverse dynamics
-        decoder_outputs = self.decoder(z,
-                                       y1_mask,
-                                       mu_y1,
-                                       n_timesteps,
-                                       stoc=stoc,
-                                       spk=spk,
-                                       psd=psd,
-                                       melstyle=melstyle,
-                                       emo_label=emo_label,
-                                       align_len=mu_y1.shape[-1],
-                                       align_mtx=attn1,
-                                       guidence_strength=guidence_strength,
-                                       attn_mask=attn_hardMask)
+        decoder_outputs = self.decoder.reverse_diffusion_mix(
+            z,
+            y1_mask,
+            mu_y1,
+            n_timesteps,
+            stoc=stoc,
+            spk1=spk1,
+            emo_label1=emo_label1,
+            melstyle1=melstyle1,
+            attn_hardMask1=attn_hardMask1,
+            spk2=spk2,
+            emo_label2=emo_label2,
+            melstyle2=melstyle2,
+            attn_hardMask2=attn_hardMask2,
+            align_len=mu_y1.shape[-1],
+            align_mtx=attn1,
+            guidence_strength=guidence_strength)
 
         decoder_outputs = decoder_outputs[:, :, :y1_max_length]
-        return encoder_outputs, decoder_outputs, attn1[:, :, :y1_max_length]
+        return encoder_outputs, decoder_outputs, attn1[:, :, :y1_max_length], attn_hardMask
 
     #@torch.no_grad()
     def reverse_diffusion_interp(self,

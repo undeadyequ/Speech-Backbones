@@ -10,18 +10,17 @@ import argparse
 import json
 import datetime as dt
 import os
+import sys
 
 import numpy as np
 from scipy.io.wavfile import write
 import torch
 from typing import Union
 
-from model import GradTTS, CondGradTTS
 from text import text_to_sequence, cmudict, text_to_arpabet
 from text.symbols import symbols
 from utils import intersperse
 
-import sys
 sys.path.append('./hifi-gan/')
 from env import AttrDict
 from models import Generator as HiFiGAN
@@ -30,7 +29,7 @@ from model import GradTTS, CondGradTTS, CondGradTTSLDM
 import yaml
 from utils import get_emo_label
 from model.maskCreation import create_p2p_mask, DiffAttnMask
-from GradTTS.exp.util import get_ref_pRange, get_tgt_pRange
+from GradTTS.exp.utils import get_ref_pRange, get_tgt_pRange
 from GradTTS.data import get_mel
 from GradTTS.utils import parse_filelist
 
@@ -234,16 +233,24 @@ def inference_p2p_transfer_by_attnMask(
         chk_pt,
         syn_txt=None,
         time_steps=50,
-        spk=None,
-        emo_label=None,
-        melstyle=None,
+
+        spk1=None,
+        emo_label1=None,
+        melstyle1=None,
+        attn_hardMask1=None,
+
+        spk2=None,
+        emo_label2=None,
+        melstyle2=None,
+        attn_hardMask2=None,
+
         out_dir=None,
         guidence_strength=3.0,
         stoc=False,
         output_pre="sample_",
+
         ref_p_start=5,
         ref_p_end=8,
-        ref_id=None,
         tgt_p_start=8,
         tgt_p_end=9,
         p2p_mode="noise"
@@ -280,19 +287,8 @@ def inference_p2p_transfer_by_attnMask(
     with open(syn_txt, 'r', encoding='utf-8') as f:
         texts = [line.strip() for line in f.readlines()]
 
-    # Recheck transfer/target phonemes corresponding.
-    index_list = parse_filelist(ref_indx_dir + "/ref_index.txt")
-    ref_text = [text for basename, speaker, phone, text in index_list if basename == ref_id][0]
-    ref2_phnms = text_to_arpabet(ref_text, cleaner_names=["english_cleaners"], dictionary=cmu)  # ["p1", "p2"]
-    ref2_phnm = ref2_phnms[ref_p_start:ref_p_end]
-    print("reference phn[{}:{}]: {} <- {}".format(ref_p_start, ref_p_end, ref2_phnm, ref_text))
-    for i, text in enumerate(texts):
-        tgt_phnms = text_to_arpabet(text, cleaner_names=["english_cleaners"], dictionary=cmu)  # ["p1", "p2"]
-        tgt_phnm = tgt_phnms[tgt_p_start:tgt_p_end]
-        print("target phn[{}:{}]:{}  <- {}".format(tgt_p_start, tgt_p_end, tgt_phnm, text))  ## h e w i l <- w is 2
-
     # Get frame-level transfering phoneme start/end on reference speech by textGrid
-    ref_pFrame_range = get_ref_pRange(ref_p_start, ref_p_end, ref_id)
+    ref_pFrame_range = get_ref_pRange(ref_p_start, ref_p_end, ref2_id)
 
     # Get phoneme-level taget start/edn on target speech  <- big problem ?
     tgt_p_start = tgt_p_start * 2
@@ -301,7 +297,7 @@ def inference_p2p_transfer_by_attnMask(
 
     if p2p_mode == "noise":
         p2p_mask = None
-        ref2_y = get_mel(ref_id, ref_id.split("_")[0], mel_dir).cuda()
+        ref2_y = get_mel(ref2_id, ref2_id.split("_")[0], mel_dir).cuda()
         ref2_start_p = ref_pFrame_range[0]
         ref2_end_p = ref_pFrame_range[1]
     elif p2p_mode == "crossAttn":
@@ -319,31 +315,42 @@ def inference_p2p_transfer_by_attnMask(
             x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
             t = dt.datetime.now()
 
-            if p2p_mode == "crossAttn":
-                # create p2p mask
-                p2p_mask = create_p2p_mask(
-                    tgt_size=x.shape[1],
-                    ref_size=melstyle.shape[2],
-                    dims=4,
-                    tgt_range=tgt_pRange,
-                    ref_range=ref_pFrame_range
-                )
-                p2p_mask = p2p_mask.cuda()
-                # check start/end of 1 value in 2 dimensions.
-                print(p2p_mask[0, 0, tgt_pRange[0] - 2: tgt_pRange[0] + 2, :]) # masked=0, unmasked=1
-            y_enc, y_dec, attn = generator.reverse_diffusion_p2pStyleTransfer(
+            # create p2p mask
+            p2p_mask1 = create_p2p_mask(
+                tgt_size=x.shape[1],
+                ref_size=melstyle1.shape[2],
+                dims=4,
+                tgt_range=tgt_pRange,
+                ref_range=ref_pFrame_range
+            )
+            p2p_mask1 = p2p_mask1.cuda()
+            p2p_mask2 = 1 - p2p_mask1
+            ############# CHECK2.1 start/end of ref and tgt (grid=0 circled by extra 2dims with 1) ###################
+            print("p2p grid mask with 2 extra value on 1/2 dims \n")
+            print(p2p_mask1[0, 0, tgt_pRange[0] - 2: tgt_pRange[1] + 2,
+                  ref_pFrame_range[0] - 2:ref_pFrame_range[1] + 2])  # masked=0, unmasked=1
+
+            y_enc, y_dec, attn, attn_hardMask = generator.reverse_diffusion_mix(
                 x,
                 x_lengths,
                 n_timesteps=time_steps,
                 temperature=1.5,    # 1.5
                 stoc=stoc,
                 length_scale=0.91,   # 0.91
-                spk=spk,
-                emo_label=emo_label,
-                melstyle=melstyle,
+                mix_mode=p2p_mode,
+
+                spk1=spk1,
+                emo_label1=emo_label1,
+                melstyle1=melstyle1,
+                attn_hardMask1=p2p_mask1,
+
+                spk2=spk2,
+                emo_label2=emo_label2,
+                melstyle2=melstyle2,
+                attn_hardMask2=p2p_mask2,
+
                 guidence_strength=guidence_strength,
-                attn_hardMask=p2p_mask,
-                ref2_y=ref2_y,
+                #ref2_y=ref2_y,
                 ref2_start_p=ref2_start_p,
                 ref2_end_p=ref2_end_p,
                 tgt_start_p=tgt_p_start,
@@ -354,6 +361,7 @@ def inference_p2p_transfer_by_attnMask(
             audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
             write(f'{out_dir}/{output_pre}{i}.wav', 22050, audio)
     print('Done. Check out `out` folder for samples.')
+    return y_dec, attn_hardMask
 
 
 def inference_interp(
@@ -507,7 +515,6 @@ if __name__ == '__main__':
     mel_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD"
     ref_indx_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/resources/filelists"
 
-
     NO_INTERPOLATION = False
     INTERPOLATE_INFERENCE_SIMP = False
 
@@ -554,25 +561,69 @@ if __name__ == '__main__':
                           )
 
     if P2P_TRANSFER:
+        torch.set_printoptions(threshold=10_000)
         # conditions 1 (base style)
-        emo_label = "Sad"
-        emo_label_tensor = torch.LongTensor(get_emo_label(emo_label, emo_num_dict)).cuda()
-        melstyle_tensor = torch.from_numpy(np.load(
-            melstyle_dir + "/" + emo_melstyle_dict2[emo_label])).cuda()
-        melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
+        speaker_id1 = 19  # 15
+        emo_label1 = "Sad"
+        ref1_id = emo_melstyle_dict2[emo_label1].split(".")[0]
+
+        spk_tensor1 = torch.LongTensor([speaker_id1]).cuda() if not isinstance(speaker_id1, type(None)) else None
+        emo_label_tensor1 = torch.LongTensor(get_emo_label(emo_label1, emo_num_dict)).cuda()
+        melstyle_tensor1 = torch.from_numpy(np.load(
+            melstyle_dir + "/" + emo_melstyle_dict2[emo_label1])).cuda()
+        melstyle_tensor1 = melstyle_tensor1.unsqueeze(0).transpose(1, 2)
 
         # conditions 2 (p-level style)
-        ref_id = "0019_000403"
+        speaker_id2 = 19  # 15
+        emo_label2 = "Angry"
+        ref2_id = emo_melstyle_dict2[emo_label2].split(".")[0]
 
+        spk_tensor2 = torch.LongTensor([speaker_id2]).cuda() if not isinstance(speaker_id2, type(None)) else None
+        emo_label_tensor2 = torch.LongTensor(get_emo_label(emo_label2, emo_num_dict)).cuda()
+        melstyle_tensor2 = torch.from_numpy(np.load(
+            melstyle_dir + "/" + emo_melstyle_dict2[emo_label2])).cuda()
+        melstyle_tensor2 = melstyle_tensor2.unsqueeze(0).transpose(1, 2)
+
+        #ref_id = "0019_000403"
         # p2p (resource and target) phoneme index
         ## still 7 - 10 (8 9: till) leave (10 11) forest  18 - 26 (rest: 21 25)
         ## ?? get it from x with 148? ??
-        tgt_p_start, tgt_p_end = 7, 9  # need check
+        tgt_p_start, tgt_p_end = 10, 14  # need check
         ref_p_start, ref_p_end = 7, 9  # till 6 7
 
         # p2p mode
         p2p_mode = "crossAttn"  # noise or crossAttn
-        random_seeds = 1   # v100: slight "still", v102, strong "still"
+        random_seeds = 2   # v100: slight "still", v102, strong "still"
+
+        """
+        from text.phoneme import get_phoneme, get_phonemeID
+        # reference phoneme start/end
+        print(get_phoneme(ref2_text))
+        ref2_transfer_phonme = "?" # <- select from above
+        ref_p_start, ref_p_end = get_phonemeID(ref2_text, ref2_transfer_phonme)
+
+        for i, text in enumerate(texts):
+            print(get_phoneme(ref2_text))
+        for i, phone in enumerate(tgt_phnms):
+            tgt_p_start, tgt_p_end = get_phonemeID(ref2_text, phone)
+        # target phoneme start/end
+        tgt_phnms = ["", "", ""]  # len == len(texts)
+        tgt_
+        """
+        ########### CHECK1: ref/tgt id check ############
+        with open(syn_txt, 'r', encoding='utf-8') as f:
+            texts = [line.strip() for line in f.readlines()]
+        index_list = parse_filelist(ref_indx_dir + "/ref_index.txt")
+        ref2_text = [text for basename, speaker, phone, text in index_list if basename == ref2_id][0]
+        ref2_phnms = text_to_arpabet(ref2_text, cleaner_names=["english_cleaners"], dictionary=cmu)  # ["p1", "p2"]
+        ref2_phnm = ref2_phnms[ref_p_start:ref_p_end]
+        print("reference phn[{}:{}]: {} <- {}".format(ref_p_start, ref_p_end, ref2_phnm, ref2_text))
+        # tgt
+        for i, text in enumerate(texts):
+            tgt_phnms = text_to_arpabet(text, cleaner_names=["english_cleaners"], dictionary=cmu)  # ["p1", "p2"]
+            tgt_phnm = tgt_phnms[tgt_p_start:tgt_p_end]
+            #print(tgt_phnms)
+            print("target phn[{}:{}]:{}  <- {}".format(tgt_p_start, tgt_p_end, tgt_phnm, text))  ## h e w i l <- w is 2
 
         # Output
         out_dir = f"{logs_dir}chpt{chpt_n}_time{time_steps}_spk{speaker_id}_emo{emo_label}"
@@ -588,15 +639,20 @@ if __name__ == '__main__':
                     chk_pt,
                     syn_txt=syn_txt,
                     time_steps=time_steps,
-                    spk=spk_tensor,
-                    emo_label=emo_label_tensor,
-                    melstyle=melstyle_tensor,
+
+                    spk1=spk_tensor1,
+                    emo_label1=emo_label_tensor1,
+                    melstyle1=melstyle_tensor1,
+
+                    spk2=spk_tensor2,
+                    emo_label2=emo_label_tensor2,
+                    melstyle2=melstyle_tensor2,
+
                     out_dir=out_dir,
                     guidence_strength=guidence_strength,
                     stoc=stoc,
                     ref_p_start=ref_p_start,
                     ref_p_end=ref_p_end,
-                    ref_id=ref_id,
                     tgt_p_start=tgt_p_start,
                     tgt_p_end=tgt_p_end,
                     p2p_mode=p2p_mode,
@@ -610,9 +666,9 @@ if __name__ == '__main__':
                           chk_pt,
                           syn_txt=syn_txt,
                           time_steps=time_steps,
-                          spk=spk_tensor,
-                          emo_label=emo_label_tensor,
-                          melstyle=melstyle_tensor,
+                          spk=spk_tensor1,
+                          emo_label=emo_label_tensor1,
+                          melstyle=melstyle_tensor1,
                           out_dir=out_dir,
                           guidence_strength=guidence_strength,
                           stoc=stoc,

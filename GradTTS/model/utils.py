@@ -80,7 +80,7 @@ def align_a2b(a, tr_seq_len, attn=None):
     return b
 
 
-def align_a2b_padcut(a, tr_seq_len):
+def align_a2b_padcut(a, tr_seq_len, pad_value=0):
     if len(a.shape) == 4:
         sr_seq_len = a.shape[-1]
     elif len(a.shape) == 3:
@@ -95,7 +95,7 @@ def align_a2b_padcut(a, tr_seq_len):
         right_pad = tr_seq_len - left_pad - sr_seq_len
         p1d = (left_pad, right_pad)
         # b = a.permute(0, 2, 1)
-        b = F.pad(a, p1d, "constant", 0)  # (b, word_len, 80) -> # (b, mel_len, 80)
+        b = F.pad(a, p1d, "constant", pad_value)  # (b, word_len, 80) -> # (b, mel_len, 80)
         b_min, b_max = torch.min(b), torch.max(b)
         # b = b.permute(0, 2, 1)
         # psd = psd.unsqueeze(1)  # (b, 1, mel_len, 80)

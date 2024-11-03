@@ -76,7 +76,6 @@ def save_plot(tensor, savepath, size=(12, 3)):
     return
 
 
-
 ##### For inference
 def get_emo_label(emo: str,
                   emo_num_dict: dict=emo_num_dict,
@@ -85,3 +84,4 @@ def get_emo_label(emo: str,
     emo_label = [[0] * emo_emb_dim]
     emo_label[0][emo_num_dict[emo]] = emo_value
     return emo_label
+

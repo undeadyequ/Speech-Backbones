@@ -17,7 +17,6 @@ from GradTTS.model.sampleGuidence import SampleGuidence
 # diffuser
 from src.diffusers import UNet2DConditionModel
 
-
 class CondDiffusion(BaseModule):
     """
     Conditional Diffusion that denoising mel-spectrogram from latent normal distribution
@@ -161,6 +160,84 @@ class CondDiffusion(BaseModule):
             xt = (xt - dxt) * mask
         return xt
 
+    @torch.no_grad()
+    def reverse_diffusion_mix(
+            self,
+            z,
+            mask,
+            mu,
+            n_timesteps,
+            stoc=True,
+            spk1=None,
+            emo_label1=None,
+            melstyle1=None,
+            attn_hardMask1=None,
+            spk2=None,
+            emo_label2=None,
+            melstyle2=None,
+            attn_hardMask2=None,
+            align_len=None,
+            align_mtx=None,
+            guidence_strength=3.0):
+        """
+        Given z, mu and conditioning (emolabel, psd, spk), denoise melspectrogram by ODE or SDE solver (stoc)
+        mel_len = 100 for length consistence
+        Args:
+            z:      (b, 80, mel_len)
+            mask:   (b, 1, mel_len)
+            mu:     (b, 80, mel_len)
+            n_timesteps: int
+            stoc:   bool, default = False
+            spk:    (b, spk_emb) if exist else  NONE
+            emo:    (b, emo_emb) if exist else  NONE
+            psd:    (b, psd_dim, psd_len)   psd_len is not mel_len, psd_dim = 3 when eng/pitch/dur, psd=256 when wav2vector
+            melstyle: (b, ?, ?)
+            emo_label: (b, 1, emo_n)
+
+        Returns:
+
+        """
+        h = 1.0 / n_timesteps
+        xt = z * mask
+
+        for i in range(n_timesteps):
+            t = (1.0 - (i + 0.5) * h) * torch.ones(z.shape[0], dtype=z.dtype,
+                                                   device=z.device)
+            time = t.unsqueeze(-1).unsqueeze(-1)
+            noise_t = get_noise(time, self.beta_min, self.beta_max,
+                                cumulative=False)
+            score_emo = self.estimator.reverse_mix(
+                x=xt,
+                mask=mask,
+                mu=mu,
+                t=t,
+                spk1=spk1,
+                melstyle1=melstyle1,
+                emo_label1=emo_label1,
+                attn_mask1=attn_hardMask1,
+                spk2=spk2,
+                melstyle2=melstyle2,
+                emo_label2=emo_label2,
+                attn_mask2=attn_hardMask2,
+                align_len=align_len,
+                align_mtx=align_mtx,
+                guidence_strength=guidence_strength,
+            )
+            dxt_det = 0.5 * (mu - xt) - score_emo
+
+            # adds stochastic term
+            if stoc:
+                dxt_det = dxt_det * noise_t * h
+                dxt_stoc = torch.randn(z.shape, dtype=z.dtype, device=z.device,
+                                       requires_grad=False)
+                dxt_stoc = dxt_stoc * torch.sqrt(noise_t * h)
+                dxt = dxt_det + dxt_stoc
+            else:
+                dxt = 0.5 * (mu - xt - score_emo)
+                dxt = dxt * noise_t * h
+            xt = (xt - dxt) * mask
+        return xt
+
     #@torch.no_grad()
     def reverse_diffusion_interp_mod(
             self,
@@ -182,8 +259,7 @@ class CondDiffusion(BaseModule):
             mask_time_step=None,
             mask_all_layer=True,
             temp_mask_value=0,
-            guidence_strength=3.0
-    ):
+            guidence_strength=3.0):
         """
         Interpolated in 3 mode: simp, temp, freq
         Args:

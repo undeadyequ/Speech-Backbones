@@ -9,7 +9,7 @@ import torch
 import yaml
 from GradTTS.text.symbols import symbols
 
-from GradTTS.model.estimators import GradLogPEstimator2dCond, \
+from GradTTS.model.estimators_v2 import GradLogPEstimator2dCond, \
     create_pitch_bin_mask, create_left_right_mask
 
 

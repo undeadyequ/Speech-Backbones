@@ -11,7 +11,7 @@ import math
 import torch
 from GradTTS.model.base import BaseModule
 from GradTTS.model.diffusion import *
-from GradTTS.model.estimators import GradLogPEstimator2dCond
+from GradTTS.model.estimators_v2 import GradLogPEstimator2dCond
 
 from GradTTS.model.text_encoder import TextEncoder
 

@@ -165,7 +165,7 @@ def create_p2p_mask(
 ):
     """
     create phoneme2phoneme mask
-    p2p_mask: ([b,1], [c,1], l_q, [l_k, 1])
+    p2p_mask: (b, c, l_q, l_k)
     """
     # check range out of range
     if tgt_range[1] > tgt_size or ref_range[1] > ref_size:

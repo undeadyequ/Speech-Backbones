@@ -2,10 +2,11 @@ from GradTTS.model.diffusion import *
 from pathlib import Path
 
 class UNet2DCondSpeechModel:
-    def __init__(self, in_out, att_type, dim, dims, att_dim, heads):
+    def __init__(self, in_out, att_type, dim, dims, att_dim, heads, n_feats):
         self.downs = torch.nn.ModuleList([])
         self.ups = torch.nn.ModuleList([])
         self.num_resolutions = len(in_out)
+        self.enc_hid_dim = n_feats * 3
 
         # Set unet
         in_out = list(zip(dims[:-1], dims[1:]))  # [(3, 64), (64, 128), (128, 256)]
@@ -119,7 +120,6 @@ class UNet2DCondSpeechModel:
                     attn_mask_hids1,
                     attn_mask_hids2
                     ):
-
         input_x = torch.clone(x)
 
         hiddens = []

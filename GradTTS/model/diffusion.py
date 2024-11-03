@@ -135,7 +135,7 @@ class MultiAttention2(BaseModule):
             input_Q: (b, c, d_q, l_q)   c = dim_in_q
             key:    (b, d_k, l_k)       d_k = dim_in_k
             value:  (b, d_k, l_k)
-            attn_mask: ([b,1], [c,1], d_q * l_q, [l_k, 1]) Mask attention score map for interpolation.
+            attn_mask: (1, 1, d_q * l_q, l_k) Mask attention score map for interpolation.
         Returns:
             out:  (b, c, d_q, l_q)
         """
@@ -162,11 +162,29 @@ class MultiAttention2(BaseModule):
 
         output = self.to_out(context)    # -> (b, d_q * l_q, c)
 
-        #output = output + residual       # -> (b, d_q * l_q, c)  # There are 2 residual
+        #output = output + residual       # -> (b, d_q * l_q, c)  # There are 2 residual ?? trained model used this or not ?
 
         # Only used in temporary interpolation
+        """
         if attn_mask is not None and attn_mask.shape[-1] == 1:        # Mask on output+1st residual
             attn_mask_nohead = attn_mask[:, 0, :, :].squeeze(1)   # return this for mask on 2nd residual
+            output = output.masked_fill(attn_mask_nohead, mask_value)
+        """
+        # get output_mask from attn_mask, and use output_mask to output
+        if attn_mask is not None:
+            """
+            attn_mask_nohead = torch.all(attn_mask, dim=3)  # (1, 1, d_q * l_q)  <- problem
+            attn_mask_nohead = attn_mask_nohead.squeeze(1).unsqueeze(2)  # (1, d_q * l_q, 1)
+            """
+            #attn_mask = ~attn_mask
+            attn_mask_nohead, _ = convert_p2pMaskToPMask(attn_mask)
+
+            ### check; certain rows in 2rd dimension should be true, some should be False
+            torch.set_printoptions(threshold=100000)
+            #print("if there is true")
+            #print((attn_mask[0, 0, :, :]==True).nonzero(as_tuple=True))
+            #print((attn_mask_nohead[0, :, 0]==True).nonzero(as_tuple=True))
+
             output = output.masked_fill(attn_mask_nohead, mask_value)
         else:
             attn_mask_nohead = None
@@ -177,10 +195,47 @@ class MultiAttention2(BaseModule):
             output = torch.nn.LayerNorm(c).cuda()(output).transpose(1, 2)  # (b, c, d_q * l_q)
             output = output.view(b, c, l_q, d_q).transpose(2, 3)
 
+        # use attn_mask_nohead to mask residual
         if attn_mask_nohead is not None:
             return output, attn, attn_mask_nohead
         else:
             return output, attn
+
+
+def convert_p2pMaskToPMask(p2pMask):
+    """
+    1. utterance p2pMask
+    F F F     F F F
+    F T F  -> T T T
+    F F F     F F F
+
+    2. phoneme p2pMask
+    T T T     T T T
+    T F T  -> F F F
+    T T T     T T T
+
+    Args:
+        p2pMask: (1, 1, d_q * l_q, l_k)
+
+    Returns:
+        pMaks;  (1, d_q * l_q, 1)
+    """
+    utter_p2pMask = True
+    # check dims
+    if len(p2pMask.shape) == 4 and p2pMask.shape[0] == 1 and p2pMask.shape[1] == 1:
+        # utterance p2p mask
+        if torch.count_nonzero(p2pMask) < 0.5 * torch.numel(p2pMask):
+            p2pMask_tranp = ~p2pMask
+            pMask = torch.all(p2pMask_tranp, dim=3)
+            pMask = ~pMask
+        else:
+            pMask = torch.all(p2pMask, dim=3)      # (1, 1, d_q * l_q)
+            utter_p2pMask = False
+        pMask = torch.transpose(pMask, 1, 2)  # (1, d_q * l_q, 1)
+    else:
+        raise IOError("The p2pMask should be 4 dims and 1 for the first 2 dims")
+    return pMask, utter_p2pMask
+
 
 
 class MultiAttention3(BaseModule):
@@ -295,19 +350,40 @@ class ScaledDotProductionAttention(BaseModule):
             attn = attn / dimension
         attn = self.softmax(attn)
         if att_mask is not None:
+            # mask attn and set p2p grid attn value to 1
             attn = attn.masked_fill(att_mask, mask_value)  # Do mask after softmax
-            # set attn score to 1.0 in area
+
+            ############# CHECK3 atnn score ratio of p2p region ###################
+            pMask, utter_p2pMask = convert_p2pMaskToPMask(att_mask)
+            p_nums = torch.count_nonzero(pMask, dim=1)[0]
+            if not utter_p2pMask:
+                sum_of_attn_score = torch.sum(attn)
+                #print("Ratio of attention score of p2p grid is: {}".format(sum_of_attn_score / (p_nums * 1.0) ))
+
             #ref_no_zero_num = torch.max((attn > 0).sum(dim=0))
-            attn_hard_label = 1.0  # 32s
-            attn = torch.where(attn > 0, attn_hard_label, 0.0001).cuda()
-            # CHECK: attn[:, :, tgt[0]*80 : tgt[1]*80, ref[0]:ref[1]] == attn_hard_label (zero for expt)
-            #tmp = torch.sum(attn, dim=-1)
-            #torch.set_printoptions(threshold=10_000)
-            #print(tmp[0, 0, :])
+            attn_hard_label = 2.0  # 32s
+            #attn = torch.where(attn > 0, attn_hard_label, 0.0001).cuda()  # ??
+            attn = torch.where(attn > 0, attn_hard_label, 0).cuda() # ??
+
         if self.dropout is not None:
             attn = self.dropout(attn)
         output = torch.einsum('bhqk,bhkd->bhqd', attn, v)
         return output, attn
+
+
+def check_attn_score_ratio_of_p2p(attn, attn_mask):
+    """
+    masked_value = masked_tensor(attn, attn_mask)
+    attn_grid_sum = torch.sum(masked_value, dim=0)
+    print(attn_grid_sum)
+
+    p2p_grid = torch.masked_select(attn, attn_mask)
+    # size of grid
+    torch.where()
+
+    # ratio for each target phoneme
+    """
+    pass
 
 
 class MultiAttention(BaseModule):
@@ -340,12 +416,23 @@ class Residual(BaseModule):
         output = self.fn(x, *args, **kwargs)
         if type(output) is tuple and len(output) >= 2:
             if len(output) == 3:  # only used in temporary mix
+                #output, attn
                 attn_mask = output[2]
                 b, c, m, l = output[0].shape
                 attn_mask = attn_mask.view(b, -1, l, m).transpose(2, 3)  # ?? ad hoc
                 #attn_mask = attn_mask.unsqueeze(2).transpose(1, 3)
+                #print("attn_mask_nohead after transfer, shape: {}".format(attn_mask.shape))
+                ## for test ##
+                #attn_mask = ~attn_mask
+                #print(attn_mask)
+                ##
+                #print("if there is true")
+                #print((attn_mask[0, 0, :, :]==True).nonzero(as_tuple=True))
                 x = x.masked_fill(attn_mask, 0)
+                #print(x[0, 0, 0, :])
+            #return x, output[1]
             return output[0] + x, output[1]     # used p2p mix
+
         else:
             return output + x  # no interpolation
 
