@@ -16,18 +16,15 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 #import params
-from model import GradTTS, CondGradTTS
-from data import TextMelSpeakerDataset, TextMelSpeakerBatchCollate, TextMelSpeakerEmoDataset, TextMelSpeakerEmoBatchCollate
-from fastext_dataset import FastspeechDataset
+from model import CondGradTTS
+from data import TextMelSpeakerEmoDataset, TextMelSpeakerEmoBatchCollate
 from utils import plot_tensor, save_plot
 from text.symbols import symbols
 import yaml
 from model.utils import fix_len_compatibility
 sys.path.append('./hifi-gan/')
-from env import AttrDict
-from models import Generator as HiFiGAN
 from scipy.io.wavfile import write
-import json
+from GradTTS.read_model import get_vocoder
 
 
 def train_process_cond(configs):
@@ -325,7 +322,6 @@ def train_process_cond(configs):
         #torch.save(ckpt, f=f"{log_dir}/models/grad_{epoch}.pt")
 
 
-from typing import Sequence
 from typing import Union
 from pathlib import Path
 
@@ -352,17 +348,6 @@ def resume(
             map_location=f"cuda:{torch.cuda.current_device()}" if ngpu > 0 else "cpu",
         )
         model.load_state_dict(states)
-
-def get_vocoder():
-    HIFIGAN_CONFIG = './checkpts/hifigan-config.json'  # ./checkpts/config.json
-    HIFIGAN_CHECKPT = './checkpts/hifigan.pt'
-    with open(HIFIGAN_CONFIG) as f:
-        h = AttrDict(json.load(f))
-    vocoder = HiFiGAN(h)
-    vocoder.load_state_dict(torch.load(HIFIGAN_CHECKPT, map_location=lambda loc, storage: loc)['generator'])
-    _ = vocoder.cuda().eval()
-    vocoder.remove_weight_norm()
-    return vocoder
 
 
 if __name__ == "__main__":
