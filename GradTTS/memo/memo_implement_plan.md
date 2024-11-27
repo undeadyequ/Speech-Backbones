@@ -4,6 +4,7 @@
   - [Condition and sample (Diffuser)](#condition-and-sample-diffuser)
   - [Condition and sample (Origin)](#condition-and-sample-origin)
 
+
 ## Cross attention
 - K,V = Style
 - Q = content
@@ -17,6 +18,13 @@
 ![unet_arch](../img/unet_arch.png)
 
 
+## evaluation
+- similarity compare picture
+  - xticks: number/float -> phoneme
+  - show xtickslabel
+  - show title
+  - show subtitle
+  - show legend for each line
 
 ## Quesition
 ### Condition and sample (Diffuser)

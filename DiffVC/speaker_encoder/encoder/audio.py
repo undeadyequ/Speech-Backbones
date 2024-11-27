@@ -48,7 +48,7 @@ def preprocess_wav(fpath_or_wav: Union[str, Path, np.ndarray],
 
 
 def preprocess_wav_batch(wavs, source_sr=22050):
-    # This torch version is designed to cope with a batch of same lengths wavs
+    # This torch version is designed to cope with a batch of same lengths references
     if sampling_rate != source_sr:
         resample = Resample(source_sr, sampling_rate)
         wavs = resample(wavs)
@@ -74,7 +74,7 @@ def wav_to_mel_spectrogram(wav):
 
 
 def wav_to_mel_spectrogram_batch(wavs):
-    # This torch version is designed to cope with a batch of same lengths wavs
+    # This torch version is designed to cope with a batch of same lengths references
     n_fft = int(sampling_rate * mel_window_length / 1000)
     hop_length = int(sampling_rate * mel_window_step / 1000)
     win_length = int(sampling_rate * mel_window_length / 1000)
@@ -99,7 +99,7 @@ def normalize_volume(wav, target_dBFS, increase_only=False, decrease_only=False)
 
 
 def normalize_volume_batch(wavs, target_dBFS, increase_only=False, decrease_only=False):
-    # This torch version is designed to cope with a batch of same lengths wavs
+    # This torch version is designed to cope with a batch of same lengths references
     if increase_only and decrease_only:
         raise ValueError("Both increase only and decrease only are set")
     dBFS_change = target_dBFS - 10 * torch.log10(torch.mean(wavs ** 2, axis=-1))

@@ -1,8 +1,7 @@
 """ from https://github.com/keithito/tacotron """
-
 import re
-from text import cleaners
-from text.symbols import symbols
+from GradTTS.text import cleaners
+from GradTTS.text.symbols import symbols
 
 
 _symbol_to_id = {s: i for i, s in enumerate(symbols)}

@@ -110,7 +110,6 @@ def test_pitch_extraction():
     # ap = pw.d4c(data, f0, _time, fs)         # 非周期性指標の抽出
     # y = pw.synthesize(f0, sp, ap, fs)    # 合成
 
-
     # 可視化
     #plt.plot(data, label="Raw Data")
     #plt.legend(fontsize=10)
@@ -125,8 +124,16 @@ def test_pitch_extraction():
     plt.plot(_f0, linewidth=3, color="blue", label="F0 contour")
     plt.legend(fontsize=10)
     plt.show();
-"""
+    """
 
+import subprocess
+def test_mfa():
+    in_wavtxt_dir = "~/data/test_data/"
+    out_textgrid_dir = "~/data/test_data/"
+    model = "english_mfa"
+    venv_python = '/home/rosen/anaconda3/envs/aligner/bin/python'
+    args = [venv_python, 'mfa_dir.py', in_wavtxt_dir, model, out_textgrid_dir]
+    subprocess.run(args)
 
-
-
+if __name__ == '__main__':
+    test_mfa()

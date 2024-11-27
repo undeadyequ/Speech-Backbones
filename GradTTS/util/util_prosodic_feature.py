@@ -6,8 +6,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
-from GradTTS.util.util_silenceremove import remove_silence_from_wav
-
+#from GradTTS.util.util_silenceremove import remove_silence_from_wav
 
 def extract_pitch(
         audio_f: Optional[str] = None,
@@ -67,7 +66,7 @@ def extract_emo_feature_modify(
     if isinstance(audio, str):
         if remove_silence:
             temp_f = "temp.wav"
-            remove_silence_from_wav(audio, agress=1, out_wav=temp_f)
+            #remove_silence_from_wav(audio, agress=1, out_wav=temp_f)
             y, _ = librosa.load(temp_f, sr)
             #os.remove(temp_f)
         else:

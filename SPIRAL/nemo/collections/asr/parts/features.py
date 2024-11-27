@@ -226,7 +226,7 @@ class STFTExactPad(STFTPatch):
 
 
 class FilterbankFeatures(nn.Module):
-    """Featurizer that converts wavs to Mel Spectrograms.
+    """Featurizer that converts references to Mel Spectrograms.
     See AudioToMelSpectrogramPreprocessor for args.
     """
 

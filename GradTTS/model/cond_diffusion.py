@@ -125,13 +125,16 @@ class CondDiffusion(BaseModule):
         h = 1.0 / n_timesteps
         xt = z * mask
 
+        unet_attns = []
+        attn_img_time_ind = (0, 10, 20, 30, 40, 49)
+
         for i in range(n_timesteps):
             t = (1.0 - (i + 0.5) * h) * torch.ones(z.shape[0], dtype=z.dtype,
                                                    device=z.device)
             time = t.unsqueeze(-1).unsqueeze(-1)
             noise_t = get_noise(time, self.beta_min, self.beta_max,
                                 cumulative=False)
-            score_emo = self.estimator(
+            score_emo, unet_attn = self.estimator(
                 x=xt,
                 mask=mask,
                 mu=mu,
@@ -143,9 +146,13 @@ class CondDiffusion(BaseModule):
                 align_len=align_len,
                 align_mtx=align_mtx,
                 guidence_strength=guidence_strength,
-                attn_mask=attn_mask
+                return_attmap=True,
+                attn_mask=attn_mask,
+                attn_img_time_ind=attn_img_time_ind
             )
             dxt_det = 0.5 * (mu - xt) - score_emo
+            if i in attn_img_time_ind:
+                unet_attns.append((i, unet_attn))
 
             # adds stochastic term
             if stoc:
@@ -158,7 +165,7 @@ class CondDiffusion(BaseModule):
                 dxt = 0.5 * (mu - xt - score_emo)
                 dxt = dxt * noise_t * h
             xt = (xt - dxt) * mask
-        return xt
+        return xt, unet_attns
 
     @torch.no_grad()
     def reverse_diffusion_mix(

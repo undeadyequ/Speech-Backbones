@@ -71,6 +71,14 @@ emo_melstyle_list_dict2 = {
     "Happy": "0019_000753.npy"
 }
 
+emo_melstyle_spk_dict = {
+    "Angry": ("0019_000403.npy", 19),
+    "Surprise": ("0019_001453.npy", 19),
+    "Sad": ("0019_001103.npy", 19),
+    "Neutral": ("0019_000053.npy", 19),
+    "Happy": ("0019_000753.npy", 19)
+}
+
 # used for extract pitch (Phoneme average)
 psd_dict = {
     "Angry": "0015-pitch-0015_000415.npy",  # Tom could hardly speak for laughing

@@ -1,16 +1,19 @@
 import sys
 import json
 import torch
+from pathlib import Path
 
 from GradTTS.text.symbols import symbols
 from GradTTS.model import GradTTS, CondGradTTS, CondGradTTSLDM
+from typing import Union
 
-sys.path.append('hifi-gan/')
+
+sys.path.append('../hifi-gan/')
 from env import AttrDict
 from models import Generator as HiFiGAN
 
 
-def get_model(configs, model="gradtts_lm"):
+def get_model(configs, model="gradtts_lm", chk_pt=None):
     """
     Get Model
 
@@ -76,8 +79,8 @@ def get_model(configs, model="gradtts_lm"):
             pe_scale,
             att_type)
     """
-    if model == "gradtts_cross":
-        return CondGradTTS(nsymbols,
+    if model == "gradtts_cross" or model == "gradtts":
+        generator = CondGradTTS(nsymbols,
                             n_spks,
                             spk_emb_dim,
                             emo_emb_dim,
@@ -100,10 +103,30 @@ def get_model(configs, model="gradtts_lm"):
                             att_dim,
                             heads,
                             p_uncond)
+        load_model_state(chk_pt, generator)
+        generator.cuda().eval()
+    return generator
+
+def load_model_state(checkpoint: Union[str, Path], model: torch.nn.Module, ngpu=1):
+    ckpt_states = torch.load(
+        checkpoint,
+        map_location=f"cuda:{torch.cuda.current_device()}" if ngpu > 0 else "cpu",
+    )
+
+    if "model_state_dict" in ckpt_states:
+        model.load_state_dict(
+            ckpt_states["model_state_dict"])
+    else:  # temp use
+        states = torch.load(
+            checkpoint,
+            map_location=f"cuda:{torch.cuda.current_device()}" if ngpu > 0 else "cpu",
+        )
+        model.load_state_dict(states)
+
 
 def get_vocoder():
-    HIFIGAN_CONFIG = './checkpts/hifigan-config.json'  # ./checkpts/config.json
-    HIFIGAN_CHECKPT = './checkpts/hifigan.pt'
+    HIFIGAN_CONFIG = '/home/rosen/Project/Speech-Backbones/GradTTS/hifi-gan/checkpts/hifigan-config.json'  # ./checkpts/config.json
+    HIFIGAN_CHECKPT = '/home/rosen/Project/Speech-Backbones/GradTTS/hifi-gan/checkpts/hifigan.pt'
     with open(HIFIGAN_CONFIG) as f:
         h = AttrDict(json.load(f))
     vocoder = HiFiGAN(h)

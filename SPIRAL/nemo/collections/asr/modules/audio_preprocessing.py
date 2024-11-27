@@ -97,7 +97,7 @@ class AudioPreprocessor(NeuralModule, ABC):
 
 
 class AudioToMelSpectrogramPreprocessor(AudioPreprocessor):
-    """Featurizer module that converts wavs to mel spectrograms.
+    """Featurizer module that converts references to mel spectrograms.
         We don't use torchaudio's implementation here because the original
         implementation is not the same, so for the sake of backwards-compatibility
         this will use the old FilterbankFeatures for now.
@@ -268,7 +268,7 @@ class AudioToMelSpectrogramPreprocessor(AudioPreprocessor):
 
 
 class AudioToMFCCPreprocessor(AudioPreprocessor):
-    """Preprocessor that converts wavs to MFCCs.
+    """Preprocessor that converts references to MFCCs.
     Uses torchaudio.transforms.MFCC.
     Args:
         sample_rate: The sample rate of the audio.

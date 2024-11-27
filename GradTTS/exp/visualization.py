@@ -8,6 +8,7 @@ import math
 import collections
 import numpy as np
 from Cython.Compiler.Parsing import p_arith_expr
+from matplotlib.pyplot import title
 
 
 ## show psd
@@ -31,51 +32,114 @@ def show_pitch_contour(ref1, ref2,
 ## compare pitch contour
 
 def compare_pitch_contour(
+        sub_leg_data_dict,
         rc_num,
-        pitch_pair_sub,
-        title,
-        subtitle,
-        pair_legend,
-        pari_mark,
-        xy_label_sub
+        legend_mark,
+        xy_label_sub,
+        xtickslab,
+        out_png,
+        title="pitch contour",
+        show_txt=True
 ):
   """
   args:
+    sub_leg_data_dict:
+    {subtitle:{         # e.g. emotion
+        legend: data    # e.g. model # e.g. pitch
+    }}
     rc_num: (2, 3)
-    pitch_pair_sub: [([p1_0,..], [p2_0,..]), []]
+
     title: ""
-    subtitle: ["ang", "hap", ...]
-    pair_legend: ["gradTTS", "InterpTTS"]
-    pari_mark: ["*", "o"]
-    xy_label_sub: [("xlabel", "ylabel"), ()]
+    legend_mark: ["*", "o"]  # same len as len(subtitle.keys())  -> assert
+    xy_label_sub: ("xlabel", "ylabel")
   Returns:
 
   """
-  fig, axes = plt.subplots(row_n, col_n, figsize=(10 * ratios, 10))
-  plt.subplots_adjust(wspace=0.1, hspace=0.1)
-
+  # fig size
   r_num, c_num = rc_num
+  fig, axes = plt.subplots(r_num, c_num, figsize=(10 * (r_num / c_num), 10))
+  plt.subplots_adjust(wspace=0.1, hspace=0.4)
+  fontsize = 12
 
-  for c in range(c_num):
-    for r in range(r_num):
-      sub_num = c * c_num + r
-      p0 = pitch_pair_sub[sub_num][0]
-      p1 = pitch_pair_sub[sub_num][1]
+  n = 0
+  for i, (sub, leg_data) in enumerate(sub_leg_data_dict.items()):
+    r = int(n / c_num)
+    c = int(n % c_num)
+    axes[r, c].set_title(sub, fontsize=fontsize)
 
-      p0_legend = pair_legend[0]
-      p1_legend = pair_legend[1]
+    axes[r, c].set_xticks(range(len(xtickslab)))
+    #ax.set_xticklabels(farmers)
+    #xtickslab_new = "a a b b c c a a b b c c d e f g j o k l"
+    #axes[r, c].set_xticklabels(xtickslab.split(" "), rotation=60, fontsize=fontsize, minor=True)
+    axes[r, c].set_xticklabels(xtickslab)
 
-      assert len(p1) == len(p0)
-      x_value = range(len(p1))
-      axes[r, c].plot(x_value, p0, label=p0_legend, marker=pair_legend[0])
-      axes[r, c].plot(x_value, p1, label=p1_legend, marker=pair_legend[0])
+    for j, (legend, data) in enumerate(leg_data.items()):
+      x_value = range(len(data))
+      if legend == "gradtts":
+        legend = "EmoMix"
+      elif legend == "gradtts_cross":
+        legend = "Proposed"
+      axes[r, c].plot(x_value, data, label=legend, marker=legend_mark[j])
+      axes[r, c].set_xlabel(xy_label_sub[0])
+      axes[r, c].set_ylabel(xy_label_sub[1])
 
-      axes[r, c].set_xlabel(xy_label_sub[sub_num][0])
-      axes[r, c].set_ylabel(xy_label_sub[sub_num][1])
+      # axes[r, c].set_xlim(right=xticks_columns[psd])
+
+      # show reference phoneme on non-parallel style
+
+      if show_txt and legend == "reference":
+        axes[r, c].text(x_value[0], data[0], "iː w ɐ z s tʲ ɪ ɫ ɪ n d̪ ə f ɒ ɹ ɪ s t", ha='left', rotation=5, wrap=True, c="green")
+
+    if r == 0 and c == 0:
+      axes[r, c].legend(loc="upper left", ncol=3, fontsize=fontsize, bbox_to_anchor=(-0.1, 1, 1.2, 0.2))
+    n += 1
+
+  fig.suptitle(title)
+  fig.savefig(out_png, dpi=300)
 
 
-      if False:
-        #axes[r, c].set_xlim(right=xticks_columns[psd])
-        #axes[r, c].set_xticks(x_frame_for_xticks)
-        #axes[r, c].set_xticklabels(show_xticketlabel.split(" "), rotation=60, fontsize=font_size,
-                                   #minor=minor)
+def show_attn_map(
+        sub_data_dict,
+        rc_num,
+        xy_label_sub,
+        xtickslab,
+        ytickslab,
+        out_png,
+        title="attn_map"
+):
+  """
+  Args:
+    sub_data_dict:
+        {subtitle: data    # e.g. model : score_map}}
+    rc_num:
+    xy_label_sub:
+    xtickslab:
+    out_png:
+    title:
+    show_txt:
+  Returns:
+  """
+  # fig size
+  r_num, c_num = rc_num
+  fig, axes = plt.subplots(r_num, c_num, figsize=(10 * (r_num / c_num), 10))
+  plt.subplots_adjust(wspace=0.1, hspace=0.4)
+  fontsize = 12
+
+  n = 0
+  for i, (sub, data) in enumerate(sub_data_dict.items()):
+    r = int(n / c_num)
+    c = int(n % c_num)
+    axes[r, c].set_title(sub, fontsize=fontsize)
+
+    axes[r, c].set_xticks(range(len(xtickslab)))
+    axes[r, c].set_xticklabels(xtickslab)
+    axes[r, c].set_yticklabels(ytickslab)
+
+    axes[r, c].imsave(data)
+    axes[r, c].set_xlabel(xy_label_sub[0])
+    axes[r, c].set_ylabel(xy_label_sub[1])
+
+    n += 1
+  fig.suptitle(title)
+  fig.savefig(out_png, dpi=300)
+

@@ -73,8 +73,8 @@ class VCEncDataset(torch.utils.data.Dataset):
             mel_ids = os.listdir(os.path.join(self.mel_x_dir, spk))
             mel_ids = [m[:-8] for m in mel_ids]
             self.test_info += [(m, spk) for m in mel_ids]
-        print("Total number of test wavs is %d." % len(self.test_info))
-        print("Total number of training wavs is %d." % len(self.train_info))
+        print("Total number of test references is %d." % len(self.test_info))
+        print("Total number of training references is %d." % len(self.train_info))
         random.seed(random_seed)
         random.shuffle(self.train_info)
 
@@ -131,8 +131,8 @@ class VCTKEncDataset(torch.utils.data.Dataset):
             mel_ids = [m for m in mel_ids if m.split('_')[1] not in self.unseen_sentences]
             mel_ids = [m[:-8] for m in mel_ids if m not in self.exceptions]
             self.test_info += [(m, spk) for m in mel_ids]
-        print("Total number of test wavs is %d." % len(self.test_info))
-        print("Total number of training wavs is %d." % len(self.train_info))
+        print("Total number of test references is %d." % len(self.test_info))
+        print("Total number of training references is %d." % len(self.train_info))
         random.seed(random_seed)
         random.shuffle(self.train_info)
 
@@ -212,8 +212,8 @@ class VCDecDataset(torch.utils.data.Dataset):
             mel_ids = os.listdir(os.path.join(self.mel_dir, spk))
             mel_ids = [m for m in mel_ids if m not in self.exceptions]
             self.train_info += [(i[:-8], spk) for i in mel_ids]
-        print("Total number of validation wavs is %d." % len(self.valid_info))
-        print("Total number of training wavs is %d." % len(self.train_info))
+        print("Total number of validation references is %d." % len(self.valid_info))
+        print("Total number of training references is %d." % len(self.train_info))
         print("Total number of training speakers is %d." % len(self.speakers))
         random.seed(random_seed)
         random.shuffle(self.train_info)
@@ -273,8 +273,8 @@ class VCTKDecDataset(torch.utils.data.Dataset):
             mel_ids = os.listdir(os.path.join(self.mel_dir, spk))
             mel_ids = [m for m in mel_ids if m.split('_')[1] not in self.unseen_sentences]
             self.valid_info += [(i[:-8], spk) for i in mel_ids]
-        print("Total number of validation wavs is %d." % len(self.valid_info))
-        print("Total number of training wavs is %d." % len(self.train_info))
+        print("Total number of validation references is %d." % len(self.valid_info))
+        print("Total number of training references is %d." % len(self.train_info))
         print("Total number of training speakers is %d." % len(self.speakers))
         random.seed(random_seed)
         random.shuffle(self.train_info)

@@ -112,7 +112,7 @@ def embed_utterance(wav, using_partials=True, return_partials=False, **kwargs):
     """
     Computes an embedding for a single utterance.
     
-    # TODO: handle multiple wavs to benefit from batching on GPU
+    # TODO: handle multiple references to benefit from batching on GPU
     :param wav: a preprocessed (see audio.py) utterance waveform as a numpy array of float32
     :param using_partials: if True, then the utterance is split in partial utterances of 
     <partial_utterance_n_frames> frames and the utterance embedding is computed from their 
@@ -156,7 +156,7 @@ def embed_utterance(wav, using_partials=True, return_partials=False, **kwargs):
 
 
 def embed_utterance_batch(wavs, using_partials=True, return_partials=False, **kwargs):
-    # This torch version is designed to cope with a batch of same lengths wavs
+    # This torch version is designed to cope with a batch of same lengths references
     if not using_partials:
         print(wavs.shape)
         frames = audio.wav_to_mel_spectrogram_batch(wavs)

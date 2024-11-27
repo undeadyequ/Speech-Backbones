@@ -168,7 +168,7 @@ class CondGradTTS(BaseModule):
             attn_hardMask = ~attn_hardMask
 
         # Generate sample by performing reverse dynamics
-        decoder_outputs = self.decoder(z,
+        decoder_outputs, unet_attn = self.decoder(z,
                                        y_mask,
                                        mu_y,
                                        n_timesteps,
@@ -183,7 +183,7 @@ class CondGradTTS(BaseModule):
                                        attn_mask=attn_hardMask
                                        )
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
-        return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length]
+        return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length], unet_attn
 
     @torch.no_grad()
     def reverse_diffusion_mix(

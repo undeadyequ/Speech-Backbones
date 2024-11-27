@@ -1,6 +1,6 @@
 """ from https://github.com/keithito/tacotron """
 
-from text import cmudict
+from GradTTS.text import cmudict
 
 _pad        = '_'
 _punctuation = '!\'(),.:;? '

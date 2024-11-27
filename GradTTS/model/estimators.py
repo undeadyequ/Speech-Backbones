@@ -125,7 +125,8 @@ class GradLogPEstimator2dCond(BaseModule):
                 align_mtx=None,
                 guidence_strength=3.0,
                 return_attmap=False,
-                attn_mask=None
+                attn_mask=None,
+                attn_img_time_ind=(0, 10, 20, 30, 40, 49)
                 ):
         """
         Predict noise on classifier-free guidance where the noised of conditioned and unconditioned are weighted added.
@@ -167,17 +168,29 @@ class GradLogPEstimator2dCond(BaseModule):
         # Conditional sampling with weighted noise of uncond/cond
         else:
             if return_attmap:
-                cond_res, attn_amp = self.forward_to_unet(x, mask, hids, t,
+                cond_res, attn_amp = self.forward_to_unet(x,
+                                                          mask,
+                                                          hids,
+                                                          t,
                                                           return_attmap=return_attmap,
-                                                          attn_mask=attn_mask)
+                                                          attn_mask=attn_mask,
+                                                          attn_img_time_ind=attn_img_time_ind
+                                                          )
             else:
-                cond_res = self.forward_to_unet(x, mask, hids, t, return_attmap=return_attmap,
-                                                attn_mask=attn_mask)
+                cond_res = self.forward_to_unet(x,
+                                                mask,
+                                                hids,
+                                                t,
+                                                return_attmap=return_attmap,
+                                                attn_mask=attn_mask,
+                                                attn_img_time_ind=attn_img_time_ind
+                                                )
             if self.p_uncond != 0.0:
                 b, c, d_q, l_q = x.shape
                 hids = x.clone()  # <- NO condition
                 hids = hids.view(b, -1, l_q)
-                uncond_res = self.forward_to_unet(x, mask, hids, t, attn_mask=attn_mask)
+                uncond_res = self.forward_to_unet(x, mask, hids, t, attn_mask=attn_mask,
+                                                  attn_img_time_ind=attn_img_time_ind)
                 res = (1 + guidence_strength) * cond_res - guidence_strength * uncond_res
             else:
                 res = cond_res
@@ -193,28 +206,45 @@ class GradLogPEstimator2dCond(BaseModule):
                         t,
                         show_attmap=True,
                         return_attmap=False,
-                        attn_mask=None
+                        attn_mask=None,
+                        attn_img_time_ind=(0, 10, 20, 30, 40, 49)
                         ):
         """
         Forward to unet model with single hids <- modify to unet_2d_cond_speech class in v2
+
+        1. show attention map
+        - Save p2f_map_score during inference (cut/pad?)
+            - Head  <- all head
+            - Layer <- for first and last layer
+            - Time  <- [0, 10, 20, 30, 40, 49]
+        - get p_dur, phonemes by MFA from speech, text
+        - get p2p_map_score by attention_map_score function.
+        - visualize p2p_map_score from p2p_map_score and p_dur
+
+        attn_map: att(b, h, l_q * d_q, l_k)   # show all head?
+
         Returns:
 
         """
-        # show att map when t in ATTN_MAP_SHOW_range
-        #ATTN_MAP_SHOW_range = (0.2, 0.24)  # <- check front (near 1) or back (near 0)
         input = torch.clone(x)
+        t0 = t
 
-        attn_img_time_ind = [0, 10, 20, 30, 40, 49]  # <- check front (near 1) or back (near 0)
+        # setup for return_attn
+        #attn_img_time_ind = [0, 10, 20, 30, 40, 49]  # <- check front (near 1) or back (near 0)
         n_timesteps = 50
         attn_img_time = torch.tensor(
             [(1.0 - (ind + 0.5) * (1.0 / n_timesteps)) for ind in attn_img_time_ind], dtype=t.dtype, device=t.device
         )
+        return_attn = []
+
+        """
         ATTN_MAP_SHOW_FLAG = False
         #if (torch.tensor(ATTN_MAP_SHOW_range[0], dtype=t.dtype, device=t.device)
         #        < t[0] < torch.tensor(ATTN_MAP_SHOW_range[1], dtype=t.dtype, device=t.device)) and show_attmap:
         if t[0] in attn_img_time and show_attmap:
             t_show = t[0].detach().cpu().numpy()
             ATTN_MAP_SHOW_FLAG = True  # only show the attention of first unet layer.
+        """
 
         # Regularize Unet input2: Time projection
         t = self.time_pos_emb(t, scale=self.pe_scale)
@@ -239,24 +269,9 @@ class GradLogPEstimator2dCond(BaseModule):
                 attn_mask = attn_mask[:, :, ::4, :]  # Q: d/2 * l/2 = d*l*1/4   KV: No changed
             attn_masks.append(attn_mask)
 
-            #### show Attn image ####
-            if ATTN_MAP_SHOW_FLAG:
-                # Show each p2f attention of each phoneme on each head
-                head_n = attn_map.shape[1]
-                for h in range(head_n):
-                    if attn_map.shape[2] % 80 != 0:
-                        raise IOError("attn_map shape should be divide by 80: {}".format(attn_map.shape))
-                    phoneme_num = int(attn_map.shape[2] / 80)
-                    for phoneme_index in range(phoneme_num):
-                        attn_np = attn_map.detach().cpu().numpy()
-                        p2f_attn = attn_np[0, h, phoneme_index * 80: (phoneme_index + 1) * 80, :]
-                        attn_time_dir = "temp/attn_time{}".format(t_show)
-                        if not Path(attn_time_dir).is_dir():
-                            Path(attn_time_dir).mkdir(parents=True, exist_ok=True)
-                        plt.imsave(attn_time_dir + "/head{}_phone{}.png".format(h, phoneme_index),
-                                   p2f_attn)
-                ATTN_MAP_SHOW_FLAG = False
-            #### END ####
+            # Save p2f_map_score of 1st layer
+            if i == 0 and t0[0] in attn_img_time and show_attmap and not self.training:
+                return_attn.append(attn_map.detach().cpu().numpy())
 
         masks = masks[:-1]
         mask_mid = masks[-1]
@@ -278,27 +293,19 @@ class GradLogPEstimator2dCond(BaseModule):
                                                                          attn_mask=attn_mask_up)
             x = upsample(x * mask_up)
 
-        # check mid value
-        CHECK_ATTN_OUT = False
-        if CHECK_ATTN_OUT:
-            attn_map_show = attn_map.transpose(2, 3).detach().cpu().numpy()
-            output_show = x.detach().cpu().numpy()
-            attnin_show = input.detach().cpu().numpy()
-            save_plot(attn_map_show[0, 0, :, 8::80],
-                      "/home/rosen/Project/Speech-Backbones/GradTTS/{}_channel{}.png".format("attn_map", 0),
-                      size=(12, 12))
-            save_plot(output_show[0, 0, :, :],
-                      "/home/rosen/Project/Speech-Backbones/GradTTS/{}_channel{}.png".format("attn_out", 0))
-            save_plot(attnin_show[0, 0, :, :],
-                      "/home/rosen/Project/Speech-Backbones/GradTTS/{}_channel{}.png".format("attn_in", 0))
+        # Save p2f_map_score of last layer
+        if t0[0] in attn_img_time and show_attmap and not self.training:
+            return_attn.append(attn_map.detach().cpu().numpy())
 
         x = self.final_block(x, mask)
         output = self.final_conv(x * mask)
 
         if return_attmap:
+            """
             attn_map = torch.cat(
                 [attn_map[:, i, :, :] for i in range(attn_map.size(1))], dim=-2)  # (b, d_q * l_q, d_m * h)
-            return (output * mask).squeeze(1), attn_map  # ?? which attn_map ??
+            """
+            return (output * mask).squeeze(1), return_attn # ?? which attn_map ??
         else:
             return (output * mask).squeeze(1)
 
@@ -764,3 +771,41 @@ def align_cond_input(x, mu, spk, melstyle, emo_label, align_len, align_mtx, att_
     else:
         print("bad att type!")
     return x, hids
+
+
+"""
+#### show Attn image ####
+if ATTN_MAP_SHOW_FLAG:
+    # Show each p2f attention of each phoneme on each head
+    head_n = attn_map.shape[1]
+    for h in range(head_n):
+        if attn_map.shape[2] % 80 != 0:
+            raise IOError("attn_map shape should be divide by 80: {}".format(attn_map.shape))
+        phoneme_num = int(attn_map.shape[2] / 80)
+        for phoneme_index in range(phoneme_num):
+            attn_np = attn_map.detach().cpu().numpy()
+            p2f_attn = attn_np[0, h, phoneme_index * 80: (phoneme_index + 1) * 80, :]
+            attn_time_dir = "temp/attn_time{}".format(t_show)
+            if not Path(attn_time_dir).is_dir():
+                Path(attn_time_dir).mkdir(parents=True, exist_ok=True)
+            plt.imsave(attn_time_dir + "/head{}_phone{}.png".format(h, phoneme_index),
+                       p2f_attn)
+    ATTN_MAP_SHOW_FLAG = False
+#### END ####
+"""
+"""
+# save mel score
+        CHECK_ATTN_OUT = False
+        if CHECK_ATTN_OUT:
+            attn_map_show = attn_map.transpose(2, 3).detach().cpu().numpy()
+            output_show = x.detach().cpu().numpy()
+            attnin_show = input.detach().cpu().numpy()
+            # check score around f0 frequency
+            save_plot(attn_map_show[0, 0, :, 8::80],
+                      "/home/rosen/Project/Speech-Backbones/GradTTS/{}_channel{}.png".format("attn_map", 0),
+                      size=(12, 12))
+            save_plot(output_show[0, 0, :, :],
+                      "/home/rosen/Project/Speech-Backbones/GradTTS/{}_channel{}.png".format("attn_out", 0))
+            save_plot(attnin_show[0, 0, :, :],
+                      "/home/rosen/Project/Speech-Backbones/GradTTS/{}_channel{}.png".format("attn_in", 0))
+"""
