@@ -3,11 +3,10 @@ from typing import Any, Dict, Optional
 
 import matplotlib.pyplot as plt
 import json
-import pandas as pd
+#import pandas as pd
 import math
 import collections
 import numpy as np
-from Cython.Compiler.Parsing import p_arith_expr
 from matplotlib.pyplot import title
 
 
@@ -135,7 +134,7 @@ def show_attn_map(
     axes[r, c].set_xticklabels(xtickslab)
     axes[r, c].set_yticklabels(ytickslab)
 
-    axes[r, c].imsave(data)
+    axes[r, c].pcolor(data, cmap=plt.cm.Blues, alpha=0.9)
     axes[r, c].set_xlabel(xy_label_sub[0])
     axes[r, c].set_ylabel(xy_label_sub[1])
 

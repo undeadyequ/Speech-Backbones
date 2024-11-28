@@ -23,7 +23,7 @@ from GradTTS.utils import intersperse, get_emo_label
 from GradTTS.const_param import emo_melstyle_spk_dict, config_dir, logs_dir, melstyle_dir, wav_dir, wav_dict, emo_num_dict
 from GradTTS.exp.utils import get_ref_pRange
 
-from visualization import show_pitch_contour, show_energy_contour, compare_pitch_contour, show_attn_map
+from GradTTS.exp.visualization import show_pitch_contour, show_energy_contour, compare_pitch_contour, show_attn_map
 from GradTTS.model.maskCreation import create_p2p_mask, DiffAttnMask
 
 from GradTTS.preprocessor.preprocessor_v2 import PreprocessorExtract
@@ -65,7 +65,7 @@ def evaluate_prosody_similarity(
         vis_only: bool = True,
         vis_config: dict = {"row_col_num": (2, 3)},
         fs_model: int = 22050,
-        out_png = "prosody_similarity.png",
+        out_png = "result/{}_similarity_{}.png",
         start_step=1,
         end_step=2,
 ):
@@ -192,7 +192,8 @@ def evaluate_prosody_similarity(
 
 
     ####### 2. Compute psd and save to json  #######
-    prosody_dict_json = os.path.join(out_dir, "prosody_dict.json")  # all_in_one: {"emo1": {"model1": {"psd1/phone": []}}}
+    # prosody_info_dict
+    prosody_dict_json = os.path.join(out_dir, "prosody_dict.json")  # {"emo1": {"model1": {"psd1/phone": []}}}
 
     if start_step <= 2 <= end_step:
         print("2. Compute psd and save to json!")
@@ -317,11 +318,15 @@ def evaluate_prosody_similarity(
             print("Skip Vis psd contour!")
 
     ####### 4. Vis attention map given attn file #######
-    attn_map_for_vis = dict()               # Shared dict {"model1": {"emo1": np.array([p1_len, p2_len])}}}
+    # attn_info_dict (all_in_one) and attn_vis_dict
+    attn_map_dict = dict()                  # {"model1": {"emo1": [np.array((t, h, p1_len, p2_len])), [] ]}}}  # first, last
+    attn_map_for_vis = dict()               # {"model1": {"emo1": np.array([p1_len, p2_len])}}}  <- choose t and h from attn_map_dict
+    vis_t = 0
+    vis_h = 0
+        
     if start_step <= 4 <= end_step:
         print("4. Vis attention map given attn file")
         tgt_ref_dir = os.path.join(out_dir, "reference_tg")
-
         for vis_speechid in [0, 1]:
             # 1: parallel data, 0~: Non-parallel data
             syn_phonems = prosody_dict["Angry"]["gradtts"]["phonemes"][vis_speechid]
@@ -330,7 +335,9 @@ def evaluate_prosody_similarity(
             for model_n in [model_name1, model_name2]:
                 out_attn_sub_dir = os.path.join(out_dir, model_n + "_attn")
                 tgt_syn_dir = os.path.join(out_dir, model_n + "_tg")
-                attn_map_for_vis[model_n] = {}
+                attn_map_dict[model] = {}
+                attn_map_for_vis[model] = {}
+                
                 for attn_map_n in os.listdir(out_attn_sub_dir):
                     emo, id = attn_map_n.split("_")
                     # get dur, phone from syn/ref tgt
@@ -341,30 +348,48 @@ def evaluate_prosody_similarity(
 
                     # get p2f_score from saved file
                     attn_map_f = os.path.join(out_attn_sub_dir, attn_map_n)
-                    p2f_score = np.load(attn_map_f)  # [(t1, [[h, l_q_phoneme_80, l_k_frame_len], [...]]), (t2)]
+                    p2f_score = np.load(attn_map_f)  # [(t1, [[h, l_q_phoneme_80, l_k_frame_len], [...]])]
 
                     # compute p2p_score from p2f_score and dur, phone
-                    p2p_score = get_p2p_from_p2f_score(p2f_score,
-                                                       ref_duration,
-                                                       ref_phonemes,
-                                                       syn_phonemes)  # (p1_len, p2_len)
-                    attn_map_for_vis[model_n][emo] = p2p_score
+                    for t, (p2f_first, p2f_last) in p2f_score:
+                        p2p_first = get_p2p_from_p2f_score(p2f_first,
+                                                            ref_duration,
+                                                            ref_phonemes,
+                                                            syn_phonemes)  # (h, p1_len, p2_len)                       
+                        p2p_last = get_p2p_from_p2f_score(p2f_last,
+                                    ref_duration,
+                                    ref_phonemes,
+                                    syn_phonemes)  # (h, p1_len, p2_len)
+                        attn_map_dict[model_n][emo] = [(t, p2p_first), (t, p2p_last)]
+                        if t == vis_t:
+                            attn_map_for_vis[model_n][emo] = (p2p_first[vis_h, :, :], p2p_last[vis_h, :, :])
 
         # vis attention given p2p_score, phone of each model
-        for model_n, emo_attn in attn_map_for_vis.items():  # emo_attn: {"emo": (p1_len, p2_len)}
+
+        for model_n, emo_first_last_attn in attn_map_for_vis.items():  # emo_attn: {"emo": (h, p1_len, p2_len)}
             rc_num = (3, 2)
             xy_label_sub = ("phoneme", "phoneme")
-
-            attn_png_f = "attn_{}.png".format(model_n)
+            
+            attn_map_for_vis_first = [{emo: first_last[0]} for emo, first_last in emo_first_last_attn.items()]
+            attn_map_for_vis_last = [{emo: first_last[1]} for emo, first_last in emo_first_last_attn.items()]
+            
             show_attn_map(
-                emo_attn,
+                attn_map_for_vis_first,
                 rc_num,
                 xy_label_sub=xy_label_sub,
                 xtickslab=ref_phonemes,
                 ytickslab=syn_phonems,
-                out_png=attn_png_f,
-                title="Energy contour of speech synthesized on reference, emoMix, proposed ({})".format(title_extra),
-            )
+                out_png=out_png.format("attn_first", model + "_" + "t_{}_h_{}".format(vis_t, vis_h)),  # "result/{}_similarity_{}.png"
+                title="Energy contour of speech synthesized on reference, emoMix, proposed ({})".format(title_extra))
+            show_attn_map(
+                attn_map_for_vis_last,
+                rc_num,
+                xy_label_sub=xy_label_sub,
+                xtickslab=ref_phonemes,
+                ytickslab=syn_phonems,
+                out_png=out_png.format("attn_last", "_" + "t_{}_h_{}".format(vis_t, vis_h)),
+                title="Energy contour of speech synthesized on reference, emoMix, proposed ({})".format(title_extra))
+            
     else:
         print("Skip Vis attention map!")
 

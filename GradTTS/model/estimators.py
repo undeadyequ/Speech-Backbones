@@ -237,15 +237,6 @@ class GradLogPEstimator2dCond(BaseModule):
         )
         return_attn = []
 
-        """
-        ATTN_MAP_SHOW_FLAG = False
-        #if (torch.tensor(ATTN_MAP_SHOW_range[0], dtype=t.dtype, device=t.device)
-        #        < t[0] < torch.tensor(ATTN_MAP_SHOW_range[1], dtype=t.dtype, device=t.device)) and show_attmap:
-        if t[0] in attn_img_time and show_attmap:
-            t_show = t[0].detach().cpu().numpy()
-            ATTN_MAP_SHOW_FLAG = True  # only show the attention of first unet layer.
-        """
-
         # Regularize Unet input2: Time projection
         t = self.time_pos_emb(t, scale=self.pe_scale)
         t = self.t_mlp(t)

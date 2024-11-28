@@ -118,9 +118,7 @@ class CondDiffusion(BaseModule):
             psd:    (b, psd_dim, psd_len)   psd_len is not mel_len, psd_dim = 3 when eng/pitch/dur, psd=256 when wav2vector
             melstyle: (b, ?, ?)
             emo_label: (b, 1, emo_n)
-
         Returns:
-
         """
         h = 1.0 / n_timesteps
         xt = z * mask
