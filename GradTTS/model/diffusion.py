@@ -349,6 +349,7 @@ class ScaledDotProductionAttention(BaseModule):
             dimension = torch.as_tensor(k.size(-1), dtype=attn.dtype, device=attn.device).sqrt()
             attn = attn / dimension
         attn = self.softmax(attn)
+
         if att_mask is not None:
             # mask attn and set p2p grid attn value to 1
             attn = attn.masked_fill(att_mask, mask_value)  # Do mask after softmax
