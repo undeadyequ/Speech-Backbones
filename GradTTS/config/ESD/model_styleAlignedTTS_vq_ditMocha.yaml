@@ -1,0 +1,76 @@
+encoder:
+  n_enc_channels: 128    # origin: 192
+  filter_channels: 128   # origin: 768
+  filter_channels_dp: 128  # origin: 256
+  n_enc_layers: 2
+  enc_kernel: 3
+  enc_dropout: 0.1
+  n_heads: 2
+  window_size: 4
+  length_scale: 1.0 # speech pace
+
+decoder:
+  sample_channel_n: 2  # LinearAttn: 3, CrossAttn: 1, CrossAttn_Classifier_free: 2
+  dec_dim: 64
+  beta_min: 0.05
+  beta_max: 20.0
+  pe_scale: 1000  # 1 for `grad-tts-old.pt` checkpoint
+  stoc: False # default = True
+  temperature: 1.0 # terminal variance
+  n_timesteps: 50
+
+unet:
+  unet_type: "origin"  # origin or diffuser
+  att_type: "cross"   # linear or crossAtt
+  att_gran: "frame2bin"  # bin2frame or phone2frame
+  att_dim: 128
+  heads: 4
+  p_uncond: 0.0
+  guidence_strength: 3
+
+spk_emb_dim: 64
+emo_emb_dim: 5
+
+mu: "txt_depend"         # txt_depend or norm
+solver: "sde"            # sde or ode
+
+loss:
+  guided_attn: True
+
+dit_mocha:
+  input_size: 80     # W
+  patch_size: 2
+  in_channels: 2
+  hidden_size: 256   # D
+  depth: 2  # 28
+  num_heads: 4
+  mlp_ratio: 4.0
+  class1_dropout_prob: 0.1
+  class2_dropout_prob: 0.1
+  num_classes1: 64   # spk_emb_dim
+  num_classes2: 5
+  learn_sigma: False
+  strict_img_size: False
+  mocha_num_heads: 2
+  mochaAttn_kwargs:
+    kdim: 256
+    qdim: 256
+    adim: 256
+    odim: 256
+    atype: "scaled_dot"
+    chunk_size: 12
+    n_heads_mono: 1
+    n_heads_chunk: 1
+
+vqvae:
+  mel_bins: 80
+  stride: 8
+  hidden_size: 240
+  kernel_size: 5
+  n_layers: 3
+  n_stacks: 5
+  n_blocks: 2
+  vq_bins: 1024
+  vq_dim: 256
+  activation: 'ReLU'
+
