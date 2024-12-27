@@ -148,6 +148,7 @@ class CondDiffusion(BaseModule):
                 attn_mask=attn_mask,
                 attn_img_time_ind=attn_img_time_ind
             )
+
             dxt_det = 0.5 * (mu - xt) - score_emo
             if i in attn_img_time_ind:
                 unet_attns.append((i, unet_attn))

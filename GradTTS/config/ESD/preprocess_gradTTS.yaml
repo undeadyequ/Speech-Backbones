@@ -36,7 +36,7 @@ feature:
   n_feats: 80
   n_spks: 247    # 247 for Libri-TTS filelist and 1 for LJSpeech
   n_fft: 1024
-  sample_rate: 16000 # if dataset == "ljspeech" else 24000
+  sample_rate: 16000
   hop_length: 256
   win_length: 1024
   f_min: 0
