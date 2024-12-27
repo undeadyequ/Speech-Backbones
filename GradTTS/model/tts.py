@@ -10,7 +10,7 @@ import math
 import random
 
 import torch
-from model import monotonic_align
+#from model import monotonic_align
 from model.base import BaseModule
 from model.text_encoder import TextEncoder
 from model.diffusion import Diffusion

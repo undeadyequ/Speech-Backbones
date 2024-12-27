@@ -8,6 +8,7 @@ computer_path2: "acc12642fx/project"
 path:
   # Original embedding
   corpus_path: "/home/rosen/Project/FastSpeech2/ESD"
+  #corpus_path: "/home/rosen/Project/FastSpeech2/ESD"
   #corpus_path: "/home/acc12642fx/project/FastSpeech2/ESD"
   emo_emb_dir: "emo_reps"
   psd_emb_dir: "psd_reps"

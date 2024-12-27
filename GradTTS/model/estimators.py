@@ -164,7 +164,7 @@ class GradLogPEstimator2dCond(BaseModule):
                 b, c, d_q, l_q = x.shape
                 hids = x.clone()   # <- discard conditioning with p_uncond
                 hids = hids.view(b, -1, l_q)
-            res = self.forward_to_unet(x, mask, hids, t)
+            res, attn_amp = self.forward_to_unet(x, mask, hids, t, return_attmap=return_attmap)
         # Conditional sampling with weighted noise of uncond/cond
         else:
             if return_attmap:
@@ -185,6 +185,7 @@ class GradLogPEstimator2dCond(BaseModule):
                                                 attn_mask=attn_mask,
                                                 attn_img_time_ind=attn_img_time_ind
                                                 )
+            # Estimated noise with weighted cond_res and noncond_res
             if self.p_uncond != 0.0:
                 b, c, d_q, l_q = x.shape
                 hids = x.clone()  # <- NO condition
@@ -192,12 +193,13 @@ class GradLogPEstimator2dCond(BaseModule):
                 uncond_res = self.forward_to_unet(x, mask, hids, t, attn_mask=attn_mask,
                                                   attn_img_time_ind=attn_img_time_ind)
                 res = (1 + guidence_strength) * cond_res - guidence_strength * uncond_res
+            # Estimated cond_res and noncond_res
             else:
                 res = cond_res
 
             if return_attmap:
                 return res, attn_amp
-        return res
+        return res, attn_amp
 
     def forward_to_unet(self,
                         x,
@@ -261,7 +263,8 @@ class GradLogPEstimator2dCond(BaseModule):
             attn_masks.append(attn_mask)
 
             # Save p2f_map_score of 1st layer
-            if i == 0 and t0[0] in attn_img_time and show_attmap and not self.training:
+            #if i == 0 and t0[0] in attn_img_time and show_attmap and not self.training:
+            if show_attmap:
                 return_attn.append(attn_map.detach().cpu().numpy())
 
         masks = masks[:-1]
@@ -285,7 +288,8 @@ class GradLogPEstimator2dCond(BaseModule):
             x = upsample(x * mask_up)
 
         # Save p2f_map_score of last layer
-        if t0[0] in attn_img_time and show_attmap and not self.training:
+        if show_attmap:
+        #if t0[0] in attn_img_time and show_attmap and not self.training:    
             return_attn.append(attn_map.detach().cpu().numpy())
 
         x = self.final_block(x, mask)
@@ -299,349 +303,6 @@ class GradLogPEstimator2dCond(BaseModule):
             return (output * mask).squeeze(1), return_attn # ?? which attn_map ??
         else:
             return (output * mask).squeeze(1)
-
-    def forward_to_unet_mix(
-            self,
-            x,
-            mask,
-            hids1,
-            hids2,
-            t,
-            attn_mask1,
-            attn_mask2
-    ):
-        """
-        Forward to unet model with single hids <- modify to unet_2d_cond_speech class in v2
-        mask:  mask for length (l) indicator of x (b, c, d, l)
-        attn_mask1: mask for attn (b, c, d * l, l2)
-        """
-        input_x = torch.clone(x)
-        hiddens = []
-        mask = mask.unsqueeze(1)  # x mask
-        masks = [mask]
-        attn_masks1 = [attn_mask1]  # attn mask
-        attn_masks2 = [attn_mask2]
-
-        # Down
-        for i, (resnet1, resnet2, attn, downsample) in enumerate(self.downs):
-            mask_down = masks[-1]
-            x = resnet1(x, mask_down, t)  # (b, c, d, l) -> (b, c_out_i, d, l)
-            x = resnet2(x, mask_down, t)  # -> (b, c_out_i, d, l)
-            torch.set_printoptions(threshold=10_000)
-            x1, attn_map1 = attn(x, hids1, hids1, attn_mask=attn_mask1, mask_value=0)
-            x2, attn_map2 = attn(x, hids2, hids2, attn_mask=attn_mask2, mask_value=0)
-            x = x1 + x2
-            #x = x1
-
-            # -> (b, c_out_i, d, l), (b, h, l_q * d_q, l_k)
-            hiddens.append(x)
-
-            x = downsample(x * mask_down)  # -> (b, c_out_i, d/2, l/2)
-            masks.append(mask_down[:, :, :, ::2])    #
-
-            attn_mask1 = attn_mask1[:, :, ::4, :]  # Q: d/2 * l/2 = d*l*1/4   KV: No changed
-            attn_mask2 = attn_mask2[:, :, ::4, :]  # Q: d/2 * l/2 = d*l*1/4   KV: No changed
-            attn_masks1.append(attn_mask1)
-            attn_masks2.append(attn_mask2)
-
-            #### show Attn image ####
-            """
-            if ATTN_MAP_SHOW_FLAG:
-                show_attn_img(attn_map1, t[0].detach().cpu().numpy())
-                ATTN_MAP_SHOW_FLAG = False
-            """
-
-        masks = masks[:-1]
-        mask_mid = masks[-1]
-        attn_masks1 = attn_masks1[:-1]
-        attn_mask_mid1 = attn_masks1[-1]
-
-        attn_masks2 = attn_masks2[:-1]
-        attn_mask_mid2 = attn_masks2[-1]
-
-        # Mid
-        x = self.mid_block1(x, mask_mid, t)
-        x1, attn_map1 = self.mid_attn(x, hids1, hids1, attn_mask=attn_mask_mid1)
-        x2, attn_map2 = self.mid_attn(x, hids2, hids2, attn_mask=attn_mask_mid2)
-        x = x1 + x2
-        #x = x1
-        x = self.mid_block2(x, mask_mid, t)
-
-        # Up
-        for i, (resnet1, resnet2, attn, upsample) in enumerate(self.ups):
-            mask_up = masks.pop()
-            attn_mask_up1 = attn_masks1.pop()
-            attn_mask_up2 = attn_masks2.pop()
-
-            x = torch.cat((x, hiddens.pop()), dim=1)
-            x = resnet1(x, mask_up, t)
-            x = resnet2(x, mask_up, t)
-            x1, attn_map1 = attn(x, hids1, hids1, attn_mask=attn_mask_up1, mask_value=0)
-            x2, attn_map2 = attn(x, hids2, hids2, attn_mask=attn_mask_up2, mask_value=0)
-            x = x1 + x2
-            #x = x1
-            x = upsample(x * mask_up)
-
-        # Check mid value
-        CHECK_ATTN_OUT = False
-        if CHECK_ATTN_OUT:
-            pass
-            #show_attn_out(attn_map1, x, input_x)
-            # show_attn_out(attn_map2, x, input_x)
-
-        x = self.final_block(x, mask)
-        output = self.final_conv(x * mask)
-
-        return (output * mask).squeeze(1)
-
-    def reverse_mix(self,
-                    x,
-                    mask,
-                    mu,
-                    t,
-                    spk1=None,
-                    melstyle1=None,
-                    emo_label1=None,
-                    attn_mask1=None,
-                    spk2=None,
-                    melstyle2=None,
-                    emo_label2=None,
-                    attn_mask2=None,
-                    align_len=None,
-                    align_mtx=None,
-                    guidence_strength=3.0,
-                    return_attmap=False,
-                    ):
-        """
-        reverse with two reference speech (same speaker) (only inference)
-        align_len: pre-defined reference len to be aligned (reference refer to spk, mel, emo_label))
-        align_mtx: reference len that computed by align_mtxt
-        """
-        # align and combine reference style
-        _, hids1 = align_cond_input(x, mu, spk1, melstyle1, emo_label1, align_len, align_mtx, self.att_type)
-        x, hids2 = align_cond_input(x, mu, spk2, melstyle2, emo_label2, align_len, align_mtx, self.att_type)
-
-        # convert attn_mask after align
-        if attn_mask1 is not None:
-            attn_mask1 = align_a2b_padcut(attn_mask1, align_len, False)
-        if attn_mask2 is not None:
-            attn_mask2 = align_a2b_padcut(attn_mask2, align_len, True)
-
-        # Regulize Unet input2: Time projection
-        t = self.time_pos_emb(t, scale=self.pe_scale)
-        t = self.t_mlp(t)
-
-        output = self.forward_to_unet_mix(
-            x,
-            mask,
-            hids1,
-            hids2,
-            t,
-            attn_mask1,
-            attn_mask2
-        )
-        return output
-
-
-    def forward_temp_interp(self,
-                            x,
-                            mask,
-                            mu,
-                            t,
-                            spk=None,
-                            melstyle1=None,
-                            emo_label1=None,
-                            melstyle2=None,
-                            emo_label2=None,
-                            align_len=None,
-                            align_mtx=None,
-                            mask_all_layer=True,
-                            temp_mask_value=0
-                            ):
-        """
-        interpolating inference
-        att_type option
-            linear (self-attention):
-                x = x + emo + psd
-            CrossAtt (Not used):
-                q = x
-                k, v = emo + psd ? (No text information)
-
-        Args:
-            x:   (b, 80, mel_len)   # mel_len = 100 (fixed)
-            mask:(b, mel_len)
-            mu:  (b, 80, mel_len)
-            t:   (b, 64)
-            spk: (b, spk_emb)
-            emo_label: (b, 1, emo_num)
-            psd [tuple]: ((b, word_len), (b, word_len), (b, word_len))
-            melstyle: (b, 80, mel_len)
-            align_mtx
-
-        Returns:
-            output: (b, 80, mel_len)
-        """
-        #print("start estimator prediction!")
-        # Regulize Unet input1: xt and enc_hids
-        _, hids1 = align_cond_input(x, mu, spk, melstyle1, emo_label1, align_len, align_mtx, self.att_type)
-        x, hids2 = align_cond_input(x, mu, spk, melstyle2, emo_label2, align_len, align_mtx, self.att_type)
-
-        # Regulize Unet input2: Time projection
-        t = self.time_pos_emb(t, scale=self.pe_scale)
-        t = self.t_mlp(t)
-
-        mask = mask.unsqueeze(1)
-        hiddens = []
-        masks = [mask]
-
-        
-        for i, (resnet1, resnet2, attn, downsample) in enumerate(self.downs):         # c d l -> c*2 d/2 l/2 as layer increase
-            mask_down = masks[-1]
-            x = resnet1(x, mask_down, t)   # (b, c, d, l) -> (b, c_out_i, d, l)
-            x = resnet2(x, mask_down, t)   # -> (b, c_out_i, d, l)
-
-            # compute temporal mask and get temporally interpolated x
-            if i == 0 or mask_all_layer:
-                b, _, d_q, l_q = x.shape
-                # generate 1st/2nd mask (e.g. mask left/right)
-                #print("up x shape: {}".format(x.shape))
-                temp_mask_left, temp_mask_right = create_left_right_mask(b, self.heads, d_q, l_q)   # [b, h, l_q, 1]
-                x_left, attn_map_left = attn(x, key=hids1, value=hids1, attn_mask=temp_mask_left,
-                                             mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
-                x_right, attn_map_right = attn(x, key=hids2, value=hids2, attn_mask=temp_mask_right,
-                                               mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
-                x = x_left + x_right
-            else:
-                # only apply reference audio2 in other layers
-                temp_mask_left, temp_mask_right = None, None
-                x, attn_map = attn(x, key=hids2, value=hids2)  # -> (b, c_out_i, d, l)
-            hiddens.append(x)
-            x = downsample(x * mask_down)  # -> (b, c_out_i, d/2, l/2)
-            masks.append(mask_down[:, :, :, ::2])
-
-        masks = masks[:-1]
-        mask_mid = masks[-1]
-
-        x = self.mid_block1(x, mask_mid, t)
-        if mask_all_layer:
-            x_left, attn_map_left = self.mid_attn(x, hids1, hids1, attn_mask=temp_mask_left, mask_value=temp_mask_value)
-            x_right, attn_map_right = self.mid_attn(x, hids2, hids2, attn_mask=temp_mask_right, mask_value=temp_mask_value)
-            x = x_left + x_right
-        else:
-            x, _ = self.mid_attn(x, hids2, hids2)
-        x = self.mid_block2(x, mask_mid, t)
-
-        for i, (resnet1, resnet2, attn, upsample) in enumerate(self.ups):
-            mask_up = masks.pop()
-            x = torch.cat((x, hiddens.pop()), dim=1)
-            x = resnet1(x, mask_up, t)
-            x = resnet2(x, mask_up, t)
-
-            # Compute temporal mask and get temporally interpolated x
-            if i == 0 or mask_all_layer:
-                b, _, d_q, l_q = x.shape
-                #print("down x shape: {}".format(x.shape))
-                temp_mask_left, temp_mask_right = create_left_right_mask(b, self.heads, d_q, l_q)
-                x_left, attn_map_left = attn(x, key=hids1, value=hids1,
-                                             attn_mask=temp_mask_left,
-                                             mask_value=temp_mask_value)   # -> (b, c_out_i, d, l)
-                x_right, attn_map_right = attn(x, key=hids2, value=hids2,
-                                               attn_mask=temp_mask_right,
-                                               mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
-                x = x_left + x_right
-            else:
-                temp_mask_left, temp_mask_right = None, None
-                x, attn_map = attn(x, key=hids2, value=hids2, attn_mask=temp_mask_left,
-                               mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
-            x = upsample(x * mask_up)
-        x = self.final_block(x, mask)
-        output = self.final_conv(x * mask)
-        return (output * mask).squeeze(1)
-
-    def forward_freq_interp(self,
-                            x,
-                            mask,
-                            mu,
-                            t,
-                            spk=None,
-                            melstyle1=None,
-                            emo_label1=None,
-                            pitch1=None,
-                            melstyle2=None,
-                            emo_label2=None,
-                            pitch2=None,
-                            align_len=None,
-                            align_mtx=None,
-                            guide_scale=1.0,
-                            tal_right=0.8,
-                            tal_left=0.6,
-                            alpha=0.08,
-                            ):
-        """
-        Reference
-        """
-        if t > tal_right:
-            print("Refer to reference1!")
-            # get guid mask from melstyle or prosodic contours ?
-            guid_mask = create_pitch_bin_mask(
-                pitch1,
-                melstyle1
-            )  # (l_k1, 80)
-            # train tunable noise
-            score, x_guided = self.guide_sample(
-                x,
-                guid_mask,
-                mask,
-                mu,
-                t,
-                spk,
-                melstyle1,
-                emo_label1,
-                align_len,
-                align_mtx,
-                guide_scale,
-                alpha,
-                guide_pitch=True
-            )
-            print("x and x_guided is equal?: {}".format(torch.equal(x, x_guided)))
-        elif t <= tal_right and t > tal_left:
-            print("Refer to reference2!")
-            guid_mask = create_pitch_bin_mask(
-                pitch1,
-                melstyle1
-            )  # (l_k1, 80)
-            # train tunable noise
-            score, x_guided = self.guide_sample(
-                x,
-                guid_mask,
-                mask,
-                mu,
-                t,
-                spk,
-                melstyle2,
-                emo_label2,
-                align_len,
-                align_mtx,
-                guide_scale,
-                alpha,
-                guide_pitch=False
-            )
-            print("x and x_guided is equal?: {}".format(torch.equal(x, x_guided)))
-        else:
-            with torch.no_grad():
-                score = self.forward(
-                    x,
-                    mask,
-                    mu,
-                    t,
-                    spk,
-                    psd=None,
-                    melstyle=melstyle2,
-                    emo_label=emo_label2,
-                    align_len=align_len,
-                    align_mtx=align_mtx) # ?? Any problem ??
-                x_guided = x
-        return score, x_guided
 
     def guide_sample(
             self,

@@ -153,7 +153,7 @@ def train_process_cond(configs):
                         att_type,
                         att_dim,
                         heads,
-                        p_uncond,
+                        p_uncond
                         ).cuda()
     print(model)
     """
@@ -183,6 +183,7 @@ def train_process_cond(configs):
     show_img_per_epoch = 5.0
     # create vocoder
     vocoder = get_vocoder()
+
     for epoch in range(resume_epoch + 1, n_epochs + 1):
         model.eval()
         print('Synthesis...')

@@ -6,3 +6,4 @@ class SalientAreaDetector:
 
     def training(self, mel, label):
         pass
+    

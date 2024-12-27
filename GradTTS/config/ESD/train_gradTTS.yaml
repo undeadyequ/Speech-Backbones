@@ -1,7 +1,11 @@
+# log_dir ->
+# interpEmoTTS_frame2binAttn_noJoint: ConditionalGradTTS
+# styleEnhancedTTS
+
 path:
   ckpt_path: "./output/ckpt/ESD"
   # interpEmoTTS_frame2frameAttn, interpEmoTTS_linearAttn, interpEmoTTS_frame2frameAttn_noJoint
-  log_dir: "./logs/interpEmoTTS_frame2binAttn_noJoint/" # for training
+  log_dir: "./logs/styleEnhancedTTS/" # for training
   #log_dir: "/home/acc12642fx/project/Speech-Backbones/GradTTS/logs/interpEmoTTS_frame2binAttn_noJoint/" # for training
   result_path: "./output/result/ESD"
 # train
