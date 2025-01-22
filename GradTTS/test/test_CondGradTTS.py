@@ -1,6 +1,8 @@
 # if run under test folder
 import sys
-sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
+#sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
+sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones')
+sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS')
 
 import torch
 import yaml
@@ -9,7 +11,9 @@ from GradTTS.model.cond_diffusion import CondDiffusion
 from GradTTS.text.symbols import symbols
 
 def test_CondGradTTS():
-    config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
+    #config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
+    config_dir = "/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS/config/ESD"
+
     train_config = config_dir + "/train_gradTTS.yaml"
     preprocess_config = config_dir + "/preprocess_gradTTS.yaml"
     model_config = config_dir + "/model_gradTTS.yaml"
@@ -68,10 +72,12 @@ def test_CondGradTTS():
     text_max_len = 31
     psd_max_len = 31
     mel_max_len = 50
+    
     speaker_n = 10
     style_emb_dim = 768
     mel_emb_dim = 80
     speech_len = 70
+
 
     emolabel = [[0] * emo_emb_dim, [0] * emo_emb_dim]
     emolabel[0][-1] = 1
@@ -86,9 +92,7 @@ def test_CondGradTTS():
     """
 
     TEST_REVERSE = False
-    TEST_REVERSE_INTERP_TEMP = False
-    TEST_REVERSE_INTERP_FREQ = True
-    TEST_COMPUTE_LOSS = False
+    TEST_COMPUTE_LOSS = True
 
     # test condition
     model = CondGradTTS(nsymbols,
@@ -115,6 +119,7 @@ def test_CondGradTTS():
                         heads,
                         p_uncond
                         )
+    
 
     if TEST_REVERSE:
         inputs_value = {
@@ -125,9 +130,10 @@ def test_CondGradTTS():
             "stoc": stoc,
             "spk": torch.randint(0, speaker_n, (batch,)),
             "length_scale": length_scale,
-            "psd": (None, None, None),
+            #"psd": (None, None, None),
             #"emo": torch.randn(batch, style_emb_dim),
-            "melstyle": torch.randn(batch, style_emb_dim, mel_max_len),
+            "melstyle": torch.randn(batch, style_emb_dim, mel_max_len),# non-vae
+            #"melstyle": torch.randn(batch, mel_emb_dim, mel_max_len), # vae
             "emo_label": torch.tensor(emolabel, dtype=torch.int64)
         }
         output = model(**inputs_value)
@@ -138,42 +144,6 @@ def test_CondGradTTS():
             output[1].size(),
             output[2].size())
         )
-    if TEST_REVERSE_INTERP_TEMP:
-        emolabel1 = [[0] * emo_emb_dim]
-        emolabel1[0][0] = 1
-        emolabel2 = [[0] * emo_emb_dim]
-        emolabel2[0][1] = 1
-        batch = 1
-        mel_max_len = 2
-        inputs_value = {
-            "x": torch.randint(0, text_n, (batch, text_max_len)),
-            "x_lengths": torch.randint(0, text_max_len, (batch,)),
-            "n_timesteps": n_timesteps,
-            "temperature": temperature,
-            "stoc": stoc,
-            "length_scale": length_scale,
-            "spk": torch.randint(0, speaker_n, (batch,)),
-            "melstyle1": torch.randn(batch, style_emb_dim, mel_max_len),
-            "melstyle2": torch.randn(batch, style_emb_dim, mel_max_len),
-            "emo_label1": torch.tensor(emolabel1, dtype=torch.int64),
-            "emo_label2": torch.tensor(emolabel2, dtype=torch.int64),
-            "interp_type": "temp"
-        }
-
-        y_enc, y_dec, attn = model.reverse_diffusion_interp(
-            **inputs_value
-        )
-
-        # encoder_outputs, decoder_outputs, attn
-        print("print encoder_outputs: {}, decoder_outputs: {}, attn: {}".format(
-            y_enc.size(),
-            y_dec.size(),
-            attn.size())
-        )
-
-    if TEST_REVERSE_INTERP_FREQ:
-        pass
-
     if TEST_COMPUTE_LOSS:
         inputs_value_train = {
             "x": torch.randint(0, text_n, (batch, text_max_len)),

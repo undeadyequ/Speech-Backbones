@@ -12,17 +12,12 @@ import random
 import torch
 from GradTTS.model import monotonic_align
 from GradTTS.model.base import BaseModule
-from GradTTS.model.text_encoder import TextEncoder
-from GradTTS.model.diffusion import Diffusion
-from GradTTS.model.cond_diffusion import CondDiffusion
+from GradTTS.model.encoder.text_encoder import TextEncoder
 from GradTTS.model.cond_diffusion_ldm import CondDiffusionLDM
 from GradTTS.model.diffusion import Mish
 
 from GradTTS.model.utils import (sequence_mask, generate_path, duration_loss,
                                  fix_len_compatibility, align_a2b)
-from GradTTS.model.salient_area_detector import SalientAreaDetector
-import torch.nn.functional as F
-import torch.nn as nn
 
 ADD_COND_TO_ENC = True
 USE_MUY = True

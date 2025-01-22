@@ -1,0 +1,70 @@
+dataset: "ESD"   # libri-tts or ljspeech, ESD
+datatype: "melstyle"  # psd, emo_embed, other, melstyle, melstyle_onehot (for one hot)
+
+computer_path1: "rosen/Project"
+computer_path2: "acc12642fx/project"
+
+
+path:
+  # Original embedding
+  corpus_path: "/home/rosen/Project/FastSpeech2/ESD"
+  #corpus_path: "/home/rosen/Project/FastSpeech2/ESD"
+  #corpus_path: "/home/acc12642fx/project/FastSpeech2/ESD"
+  emo_emb_dir: "emo_reps"
+  psd_emb_dir: "psd_reps"
+  idx_emo_dict: "metadata_22322.json"
+  wav_dir: "16k_wav"
+
+  lexicon_path: "lexicon/librispeech-lexicon.txt"
+  raw_path: "/home/rosen/Project/FastSpeech2/raw_data/ESD"
+
+  # Trained embedding
+  preprocessed_path: "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD"
+  #preprocessed_path: "/home/acc12642fx/project/FastSpeech2/preprocessed_data/ESD"
+
+  mel: "mel"
+  pitch: "pitch"
+  energy: "energy"
+  duration: "duration"
+  index_train_f: "train.txt"
+  index_val_f: "val.txt"
+
+  # other
+  cmudict_path: 'resources/cmu_dictionary'
+
+feature:
+  add_blank: True
+  n_feats: 80
+  n_spks: 247    # 247 for Libri-TTS filelist and 1 for LJSpeech
+  n_fft: 1024
+  sample_rate: 16000
+  hop_length: 256
+  win_length: 1024
+  f_min: 0
+  f_max: 8000
+
+preprocessing:
+  val_size: 512
+  text:
+    text_cleaners: ["english_cleaners"]
+    language: "en"
+  audio:
+    sampling_rate: 16000
+    max_wav_value: 32768.0
+  stft:
+    filter_length: 1024
+    hop_length: 256
+    win_length: 1024
+  mel:
+    n_mel_channels: 80
+    mel_fmin: 0
+    mel_fmax: 8000 # please set to 8000 for HiFi-GAN vocoder, set to null for MelGAN vocoder
+  pitch:
+    feature: "phoneme_level" # support 'phoneme_level' or 'frame_level'
+    normalization: True
+  energy:
+    feature: "phoneme_level" # support 'phoneme_level' or 'frame_level'
+    normalization: True
+
+style_emb:
+  exist: True

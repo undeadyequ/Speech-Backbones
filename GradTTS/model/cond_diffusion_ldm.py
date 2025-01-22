@@ -6,21 +6,13 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # MIT License for more details.
 
-from einops import rearrange
-import math
-import torch
 from GradTTS.model.base import BaseModule
 from GradTTS.model.diffusion import *
-from GradTTS.model.estimators_v2 import GradLogPEstimator2dCond
-
-from GradTTS.model.text_encoder import TextEncoder
 
 # diffuser
 from src.diffusers import UNet2DConditionModel
 from GradTTS.text.symbols import symbols
-from typing import Any, Dict, List, Optional, Tuple, Union
-from GradTTS.model.utils import (sequence_mask, generate_path, duration_loss,
-                                 fix_len_compatibility, align_a2b)
+from typing import Any, Dict, Optional, Tuple, Union
 
 add_blank = True
 nsymbols = len(symbols) + 1 if add_blank else len(symbols)

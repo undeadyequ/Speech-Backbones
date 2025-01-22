@@ -50,6 +50,40 @@ def duration_loss(logw, logw_, lengths):
     return loss
 
 
+def mon_attention_loss(attn_w, mon_attention_mask):
+    """
+    Monotonic loss
+    attn_w:
+    mattention_mask: monotonic attention mask
+    """
+    mon_loss = torch.sum(torch.masked_fill(attn_w, mon_attention_mask))
+    return mon_loss
+
+def vae_loss():
+    pass
+
+
+def create_mon_attn_mask(attn_uy, attn_re, chunk_size=16):
+    """
+    args:
+        attn_uy: (b, h, mux_len, muy_len)
+        attn_ref: (b, h, rex_len, rey_len)
+    return:
+        mon_attn_mask: 
+    """
+    ub, uh, mux_len, muy_len = attn_uy.shape()
+    rb, rh, rex_len, rey_len = attn_re.shape()
+    
+    if ub != rb or uh != rh:
+        raise IOError("b {}{}, h {}{} should be same!".format(ub, rb, uh, rh))
+    
+    if rex_len != mux_len:
+        transfer_len = min(rex_len, mux_len)
+        attn_uy = attn_uy[:, :transfer_len, :, :]
+        attn_re = attn_re[:, :transfer_len, :, :]
+    mon_attn_mask = torch.einsum('bhyx,bhxy->bhyy', attn_uy.T(), attn_re)
+    return mon_attn_mask
+
 def align_a2b(a, tr_seq_len, attn=None):
     """
     align tensor a to b (tr_seq_len) by attn, if attn with wrong sr_len or tr_len, then
@@ -271,3 +305,208 @@ class pitchExtracdtion:
             hop_length=hop_length,
             need_trim=need_trim
         )
+        
+        
+def make_non_pad_mask(lengths, xs=None, length_dim=-1):
+    """Make mask tensor containing indices of non-padded part.
+
+    Args:
+        lengths (LongTensor or List): Batch of lengths (B,).
+        xs (Tensor, optional): The reference tensor.
+            If set, masks will be the same shape as this tensor.
+        length_dim (int, optional): Dimension indicator of the above tensor.
+            See the example.
+
+    Returns:
+        ByteTensor: mask tensor containing indices of padded part.
+                    dtype=torch.uint8 in PyTorch 1.2-
+                    dtype=torch.bool in PyTorch 1.2+ (including 1.2)
+
+    Examples:
+        With only lengths.
+
+        >>> lengths = [5, 3, 2]
+        >>> make_non_pad_mask(lengths)
+        masks = [[1, 1, 1, 1 ,1],
+                 [1, 1, 1, 0, 0],
+                 [1, 1, 0, 0, 0]]
+
+        With the reference tensor.
+
+        >>> xs = torch.zeros((3, 2, 4))
+        >>> make_non_pad_mask(lengths, xs)
+        tensor([[[1, 1, 1, 1],
+                 [1, 1, 1, 1]],
+                [[1, 1, 1, 0],
+                 [1, 1, 1, 0]],
+                [[1, 1, 0, 0],
+                 [1, 1, 0, 0]]], dtype=torch.uint8)
+        >>> xs = torch.zeros((3, 2, 6))
+        >>> make_non_pad_mask(lengths, xs)
+        tensor([[[1, 1, 1, 1, 1, 0],
+                 [1, 1, 1, 1, 1, 0]],
+                [[1, 1, 1, 0, 0, 0],
+                 [1, 1, 1, 0, 0, 0]],
+                [[1, 1, 0, 0, 0, 0],
+                 [1, 1, 0, 0, 0, 0]]], dtype=torch.uint8)
+
+        With the reference tensor and dimension indicator.
+
+        >>> xs = torch.zeros((3, 6, 6))
+        >>> make_non_pad_mask(lengths, xs, 1)
+        tensor([[[1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [0, 0, 0, 0, 0, 0]],
+                [[1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0]],
+                [[1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0]]], dtype=torch.uint8)
+        >>> make_non_pad_mask(lengths, xs, 2)
+        tensor([[[1, 1, 1, 1, 1, 0],
+                 [1, 1, 1, 1, 1, 0],
+                 [1, 1, 1, 1, 1, 0],
+                 [1, 1, 1, 1, 1, 0],
+                 [1, 1, 1, 1, 1, 0],
+                 [1, 1, 1, 1, 1, 0]],
+                [[1, 1, 1, 0, 0, 0],
+                 [1, 1, 1, 0, 0, 0],
+                 [1, 1, 1, 0, 0, 0],
+                 [1, 1, 1, 0, 0, 0],
+                 [1, 1, 1, 0, 0, 0],
+                 [1, 1, 1, 0, 0, 0]],
+                [[1, 1, 0, 0, 0, 0],
+                 [1, 1, 0, 0, 0, 0],
+                 [1, 1, 0, 0, 0, 0],
+                 [1, 1, 0, 0, 0, 0],
+                 [1, 1, 0, 0, 0, 0],
+                 [1, 1, 0, 0, 0, 0]]], dtype=torch.uint8)
+
+    """
+    return ~make_pad_mask(lengths, xs, length_dim)
+
+
+
+def make_pad_mask(lengths, xs=None, length_dim=-1):
+    """Make mask tensor containing indices of padded part.
+
+    Args:
+        lengths (LongTensor or List): Batch of lengths (B,).
+        xs (Tensor, optional): The reference tensor.
+            If set, masks will be the same shape as this tensor.
+        length_dim (int, optional): Dimension indicator of the above tensor.
+            See the example.
+
+    Returns:
+        Tensor: Mask tensor containing indices of padded part.
+                dtype=torch.uint8 in PyTorch 1.2-
+                dtype=torch.bool in PyTorch 1.2+ (including 1.2)
+
+    Examples:
+        With only lengths.
+
+        >>> lengths = [5, 3, 2]
+        >>> make_non_pad_mask(lengths)
+        masks = [[0, 0, 0, 0 ,0],
+                 [0, 0, 0, 1, 1],
+                 [0, 0, 1, 1, 1]]
+
+        With the reference tensor.
+
+        >>> xs = torch.zeros((3, 2, 4))
+        >>> make_pad_mask(lengths, xs)
+        tensor([[[0, 0, 0, 0],
+                 [0, 0, 0, 0]],
+                [[0, 0, 0, 1],
+                 [0, 0, 0, 1]],
+                [[0, 0, 1, 1],
+                 [0, 0, 1, 1]]], dtype=torch.uint8)
+        >>> xs = torch.zeros((3, 2, 6))
+        >>> make_pad_mask(lengths, xs)
+        tensor([[[0, 0, 0, 0, 0, 1],
+                 [0, 0, 0, 0, 0, 1]],
+                [[0, 0, 0, 1, 1, 1],
+                 [0, 0, 0, 1, 1, 1]],
+                [[0, 0, 1, 1, 1, 1],
+                 [0, 0, 1, 1, 1, 1]]], dtype=torch.uint8)
+
+        With the reference tensor and dimension indicator.
+
+        >>> xs = torch.zeros((3, 6, 6))
+        >>> make_pad_mask(lengths, xs, 1)
+        tensor([[[0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [1, 1, 1, 1, 1, 1]],
+                [[0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1]],
+                [[0, 0, 0, 0, 0, 0],
+                 [0, 0, 0, 0, 0, 0],
+                 [1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1],
+                 [1, 1, 1, 1, 1, 1]]], dtype=torch.uint8)
+        >>> make_pad_mask(lengths, xs, 2)
+        tensor([[[0, 0, 0, 0, 0, 1],
+                 [0, 0, 0, 0, 0, 1],
+                 [0, 0, 0, 0, 0, 1],
+                 [0, 0, 0, 0, 0, 1],
+                 [0, 0, 0, 0, 0, 1],
+                 [0, 0, 0, 0, 0, 1]],
+                [[0, 0, 0, 1, 1, 1],
+                 [0, 0, 0, 1, 1, 1],
+                 [0, 0, 0, 1, 1, 1],
+                 [0, 0, 0, 1, 1, 1],
+                 [0, 0, 0, 1, 1, 1],
+                 [0, 0, 0, 1, 1, 1]],
+                [[0, 0, 1, 1, 1, 1],
+                 [0, 0, 1, 1, 1, 1],
+                 [0, 0, 1, 1, 1, 1],
+                 [0, 0, 1, 1, 1, 1],
+                 [0, 0, 1, 1, 1, 1],
+                 [0, 0, 1, 1, 1, 1]]], dtype=torch.uint8)
+
+    """
+    if length_dim == 0:
+        raise ValueError("length_dim cannot be 0: {}".format(length_dim))
+
+    if not isinstance(lengths, list):
+        lengths = lengths.tolist()
+    bs = int(len(lengths))
+    if xs is None:
+        maxlen = int(max(lengths))
+    else:
+        maxlen = xs.size(length_dim)
+
+    seq_range = torch.arange(0, maxlen, dtype=torch.int64)
+    seq_range_expand = seq_range.unsqueeze(0).expand(bs, maxlen)
+    seq_length_expand = seq_range_expand.new(lengths).unsqueeze(-1)
+    mask = seq_range_expand >= seq_length_expand
+
+    if xs is not None:
+        assert xs.size(0) == bs, (xs.size(0), bs)
+
+        if length_dim < 0:
+            length_dim = xs.dim() + length_dim
+        # ind = (:, None, ..., None, :, , None, ..., None)
+        ind = tuple(
+            slice(None) if i in (0, length_dim) else None for i in range(xs.dim())
+        )
+        mask = mask[ind].expand_as(xs).to(xs.device)
+    return mask

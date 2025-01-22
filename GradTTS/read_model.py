@@ -4,7 +4,7 @@ import torch
 from pathlib import Path
 
 from GradTTS.text.symbols import symbols
-from GradTTS.model import GradTTS, CondGradTTS, CondGradTTSLDM
+from GradTTS.model import GradTTS, CondGradTTS
 from typing import Union
 
 

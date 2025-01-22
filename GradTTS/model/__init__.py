@@ -8,6 +8,7 @@
 
 from .tts import GradTTS
 from .cond_tts import CondGradTTS
-from .cond_tts_ldm import CondGradTTSLDM
+from .cond_tts_dit import CondGradTTSDIT
+#from .cond_tts_ldm import CondGradTTSLDM
 from .cond_diffusion import CondDiffusion
-from .cond_diffusion_ldm import CondDiffusionLDM
+#from .cond_diffusion_ldm import CondDiffusionLDM
