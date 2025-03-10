@@ -1,24 +1,16 @@
 import math
 import torch
 import torch.nn as nn
-
 import GradTTS.model.estimator
-from GradTTS.model.estimator.ditBlock import DiTConVBlock
-
-
-def STDitMA(**kwargs):
-    return STDit(attn_type="mocha", **kwargs)
-
-def STDitSA(**kwargs):
-    return STDit(attn_type="selfAttn", **kwargs)
+from GradTTS.model.estimator.stditBlock import DiTConVBlock, DiTConVMochaBlock
 
 
 class STDit(nn.Module):
-    def __init__(self, attn_type, noise_channels, cond_channels, hidden_channels, out_channels,
-                 filter_channels, dropout=0.1,
-                 n_layers=1, n_heads=4, kernel_size=3, gin_channels=0, use_lsc=True):
+    def __init__(self, noise_channels, cond_channels, crossCond_channels, hidden_channels, out_channels,
+                 filter_channels, dropout=0.1, n_layers=1, n_heads=4, kernel_size=3, gin_channels=0, monotonic_approach="no",
+                 use_lsc=True, bAttn_type="mocha", mochaAttn_kwargs=None):
         """
-
+        include STDit base, cross, and mocha
         Args:
             attn_type: monotonic attention type:
                 mocha:  selfattn + mocha
@@ -44,6 +36,7 @@ class STDit(nn.Module):
         self.out_channels = out_channels
         self.filter_channels = filter_channels
         self.use_lsc = use_lsc  # whether to use unet-like long skip connection
+        self.bAttn_type = bAttn_type
 
         self.time_embeddings = SinusoidalPosEmb(hidden_channels)
         self.time_mlp = TimestepEmbedding(hidden_channels, hidden_channels, filter_channels)
@@ -51,7 +44,9 @@ class STDit(nn.Module):
         self.in_proj = nn.Conv1d(hidden_channels + noise_channels, hidden_channels,
                                  1)  # cat noise and encoder output as input
         self.blocks = nn.ModuleList(
-            [DitWrapper(hidden_channels, filter_channels, n_heads, kernel_size, dropout, gin_channels, hidden_channels)
+            [DitWrapper(hidden_channels, filter_channels, n_heads, kernel_size, dropout, gin_channels, monotonic_approach,
+                        hidden_channels,
+                        block_type=bAttn_type, **mochaAttn_kwargs)
              for _ in range(n_layers)])
         self.final_proj = nn.Conv1d(hidden_channels, out_channels, 1)
 
@@ -61,8 +56,11 @@ class STDit(nn.Module):
             nn.SiLU(inplace=True),
             nn.Conv1d(filter_channels, filter_channels, kernel_size, padding=kernel_size // 2),  # add about 3M params
             nn.SiLU(inplace=True),
-            nn.Conv1d(filter_channels, hidden_channels, kernel_size, padding=kernel_size // 2)
-        )
+            nn.Conv1d(filter_channels, hidden_channels, kernel_size, padding=kernel_size // 2))
+
+        # prenet for reference embedder
+        if self.bAttn_type == "mocha" or self.bAttn_type == "cross":
+            self.crossCond_proj = nn.Conv1d(crossCond_channels, hidden_channels, kernel_size, padding=kernel_size // 2)
 
         if use_lsc:
             assert n_layers % 2 == 0
@@ -78,7 +76,7 @@ class STDit(nn.Module):
             nn.init.constant_(block.block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.block.adaLN_modulation[-1].bias, 0)
 
-    def forward(self, t, x, mask, mu, c):
+    def forward(self, t, x, mask, mu, c, r=None, attnCross=None):
         """Forward pass of the DiT model.
 
         Args:
@@ -91,16 +89,19 @@ class STDit(nn.Module):
         Returns:
             _type_: _description_
         """
-
+        # t: (b, ), xt: (b, mel_dim, cut_l), mask: (b, ), mu: (b, mel_dim, cut_l), emo_label:(b, emo_dim), melstyle:(b, mel_dim, cut_l)
         t = self.time_mlp(self.time_embeddings(t))
         mu = self.cond_proj(mu)
+        if self.bAttn_type == "mocha" and r is not None:
+            r = self.crossCond_proj(r)
 
-        x = torch.cat((x, mu), dim=1)
+        x = torch.cat((x, mu), dim=1)  # (b, hid_dim + noise_dim, cut_l)
         x = self.in_proj(x)
-
         lsc_outputs = [] if self.use_lsc else None
 
+        cross_attn_list = []
         for idx, block in enumerate(self.blocks):
+            #print("{}th block".format(idx))
             # add long skip connection, see https://arxiv.org/pdf/2209.12152 for more details
             if self.use_lsc:
                 if idx < self.n_lsc_layers:
@@ -108,36 +109,49 @@ class STDit(nn.Module):
                 else:
                     x = torch.cat((x, lsc_outputs.pop()), dim=1)
                     x = self.lsc_layers[idx - self.n_lsc_layers](x)
-
-            x = block(x, c, t, mask)
-
+            # t: (b, hid_dim), x: (b, hid_dim, cut_l), mask: (b, ), c: (b, emo_dim), r: (b, mel_dim, cut_l)
+            if self.bAttn_type == "mocha" or self.bAttn_type == "cross":
+                x, cross_attn = block(x, c, t, mask, r=r, attnCross=attnCross)
+            else:
+                x, cross_attn = block(x, c, t, mask)
+            cross_attn_list.append(cross_attn)
         output = self.final_proj(x * mask)
 
-        return output * mask
+        cross_attns = torch.stack(cross_attn_list, dim=0)
+        if self.bAttn_type == "mocha" or self.bAttn_type == "cross":
+            return output * mask, cross_attns
+        else:
+            return output * mask
 
 
 class DitWrapper(nn.Module):
     """ add FiLM layer to condition time embedding to DiT """
 
     def __init__(self, hidden_channels, filter_channels, num_heads, kernel_size=3, p_dropout=0.1, gin_channels=0,
-                 time_channels=0, block_type="mocha"):
+                 monotonic_approach="no", time_channels=0, block_type="mocha", **mochaAttn_kwargs):
         super().__init__()
+        self.block_type = block_type
         self.time_fusion = FiLMLayer(hidden_channels, time_channels)
-        if block_type == "mocha":
+        if block_type == "base":
             self.block = DiTConVBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout, gin_channels)
-        elif block_type == "doubleSelf":
+        elif block_type == "cross":
             self.block = DiTConVBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout, gin_channels)
-        elif block_type == "singleSelf":
-            self.block = DiTConVBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout, gin_channels)
+        elif block_type == "mocha":
+            self.block = DiTConVMochaBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout,
+                                           gin_channels, monotonic_approach, **mochaAttn_kwargs)
         else:
             print("Block type should be ...")
 
 
-    def forward(self, x, c, t, x_mask):
+    def forward(self, x, c, t, x_mask, r=None, attnCross=None):
         x = self.time_fusion(x, t) * x_mask
-        x = self.block(x, c, x_mask)
-        return x
-
+        if self.block_type == "mocha":
+            # t: (b, hid_dim), x: (b, hid_dim, cut_l), mask: (b, ), c: (b, hid_dim), r: (b, hid_dim, cut_l)
+            x, cross_attn = self.block(x, c, r=r, x_mask=x_mask, attnCross=attnCross)
+        else:
+            cross_attn = None
+            x = self.block(x, c, x_mask=x_mask)
+        return x, cross_attn
 
 class FiLMLayer(nn.Module):
     """

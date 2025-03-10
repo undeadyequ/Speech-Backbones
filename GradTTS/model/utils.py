@@ -6,15 +6,17 @@ import numpy as np
 import tgt
 import librosa
 import pyworld as pw
+from GradTTS.model import monotonic_align
+import math
 
+
+###################### Mask Related #############################
 
 def sequence_mask(length, max_length=None):
     if max_length is None:
         max_length = length.max()
     x = torch.arange(int(max_length), dtype=length.dtype, device=length.device)
     return x.unsqueeze(0) < length.unsqueeze(1)
-
-
 
 def fix_len_compatibility(length, num_downsamplings_in_unet=2):
     while True:
@@ -45,6 +47,111 @@ def generate_path(duration, mask):
     return path
 
 
+def generate_diagal_fromMask(y_lengths):
+    """
+    generate diagal Given mask
+    args:
+        y_lengths: (b, ) or # (b, tq, ts)
+    Returns:
+    """
+    if len(y_lengths.shape) == 1:
+        b, min_len = len(y_lengths), int(torch.max(y_lengths))
+        diags = torch.zeros([b, min_len, min_len]).cuda()
+        for i in range(b):
+            diag = torch.diag(y_lengths[i])
+            diags[i] = diag
+    elif len(y_lengths.shape) == 3:
+        b, tq, ts = y_lengths.shape
+        diags = torch.zeros([b, tq, ts]).cuda()
+        for i in range(b):
+            non_zero_res = (y_lengths[i] == 1).nonzero(as_tuple=True)
+            min_len = torch.min(non_zero_res[0][-1], non_zero_res[1][-1])
+            diags[i][:min_len, :min_len] = torch.diag(torch.ones(min_len))
+    else:
+        IOError("only supoort dim 1 or 3")
+    return diags
+
+
+
+def generate_gd_diagMask(dur1, dur2, gran="phoneme"):
+    """
+    Generate GD phoneme2phoneme (or frame2frame) diagnal mask (b, tq, ts)
+    , where dim1 = noise (query), dim2 = style (key, value)
+    Args:
+        dur1 (d_n, ): duration of phoneme/frame (d_n = p_L)
+        dur2 (d_n, ):
+    Returns:
+        diagMask (b, tq, ts), where tq = sum(dur1), ts = sum(dur2)
+    """
+    # check dur_n
+    if len(dur1) != len(dur2):
+        print("dur1 and dur2 should be same!")
+
+    dur1_diag = get_diag_from_dur(dur1)  # (d_n, t_q)
+    dur2_diag = get_diag_from_dur(dur2)  # (d_n, t_s)
+
+    return torch.matmul(dur1_diag, dur2_diag)
+
+
+def get_diag_from_dur2(durs, max_len=100000):
+    """
+    get diag_dur from dur
+    Args:
+        dur: (b, frame_n)  # [[0, 0, 0, 1, 1, 2, ..., 0, 0], [3, 3, 5, 5, ... 0, 0]]  # not nessasary start from 0, inconsisitent
+        max_len: max len of duration  (becuase dur is not cut)
+    Returns:
+        diag_dur: (b, p_l, m_l)
+        111000000000
+        000110000000
+        000001000000
+    """
+    #  Normalize each sample to starting from 0
+    durs_norm = durs.clone()
+    for b in range(durs.shape[0]):
+        durs_norm[b] -= durs[b][0]
+
+    b, frame_n = durs_norm.shape
+    p_l_all = int(torch.max(durs)) + 1   # p_l_all should not be normalized
+    diag_durs = torch.zeros([b, p_l_all, frame_n]).to(device=durs.device)
+
+    for b in range(durs_norm.shape[0]):
+        dur = durs_norm[b]
+        p_l = int(torch.max(durs_norm)) + 1   # phoneme nums
+        for i in range(p_l):  # loop dim1
+            search_pFrameLen = torch.where(dur == i)[0]
+            if len(search_pFrameLen) != 0:
+                try:
+                    idxs = torch.where(dur == i)[0] if i != 0 else torch.arange(torch.nonzero(dur)[0][0])
+                except:
+                    print("1. i, dur, searchpFrameLen, indxs", i, dur, search_pFrameLen, idxs)
+                    #print("error diag dur", idxs, frame_n)
+                try:
+                    diag_durs[b, i, idxs[0]:idxs[-1] + 1] = 1
+                except:
+                    print("2. i, dur, searchpFrameLen, indxs", i, dur, search_pFrameLen, idxs)
+    return diag_durs
+
+def get_diag_from_dur(dur, max_len=100000):
+    """
+    Args:
+        dur: (d_n, )   # [4, 2, 3]
+        max_len: max len of duration  (becuase dur is not cut)
+    Returns:
+        diag_dur: (d_n, m_l)
+    """
+    diag_dur = torch.zeros([len(dur), min(torch.sum(dur), max_len)])
+    start = 0
+    for i, d in enumerate(dur):
+        end = start + d
+        if end > max_len:
+            diag_dur[i, start: max_len] = 1
+            break
+        diag_dur[i, start : start + d] = 1
+        start = start + d
+    return diag_dur
+
+###################### Loss Related #############################
+
 def duration_loss(logw, logw_, lengths):
     loss = torch.sum((logw - logw_)**2) / torch.sum(lengths)
     return loss
@@ -63,6 +170,8 @@ def vae_loss():
     pass
 
 
+
+###################### Attention Related #############################
 def create_mon_attn_mask(attn_uy, attn_re, chunk_size=16):
     """
     args:
@@ -83,6 +192,25 @@ def create_mon_attn_mask(attn_uy, attn_re, chunk_size=16):
         attn_re = attn_re[:, :transfer_len, :, :]
     mon_attn_mask = torch.einsum('bhyx,bhxy->bhyy', attn_uy.T(), attn_re)
     return mon_attn_mask
+
+
+def search_ma(x, y, attn_mask, xy_dim=80):
+    """
+    Monotonic Alignment Search
+    Returns:
+
+    """
+    const = -0.5 * math.log(2 * math.pi) * xy_dim
+    factor = -0.5 * torch.ones(x.shape, dtype=x.dtype, device=x.device)
+    y_square = torch.matmul(factor.transpose(1, 2), y ** 2)
+    y_mu_double = torch.matmul(2.0 * (factor * x).transpose(1, 2), y)
+    mu_square = torch.sum(factor * (x ** 2), 1).unsqueeze(-1)
+    log_prior = y_square - y_mu_double + mu_square + const
+    attn = monotonic_align.maximum_path(log_prior, attn_mask.squeeze(1))
+    return attn
+
+
+###################### Align Related #############################
 
 def align_a2b(a, tr_seq_len, attn=None):
     """
@@ -114,32 +242,25 @@ def align_a2b(a, tr_seq_len, attn=None):
     return b
 
 
-def align_a2b_padcut(a, tr_seq_len, pad_value=0):
-    if len(a.shape) == 4:
-        sr_seq_len = a.shape[-1]
-    elif len(a.shape) == 3:
-        sr_seq_len = a.shape[-1]
-    elif len(a.shape) == 2:
-        sr_seq_len = a.shape[-1]
-    else:
-        raise IOError("a shape {} is wrong".format(a.shape))
+def align_a2b_padcut(a, tr_seq_len, pad_value=0, pad_type="two"):
+    """
+    padcut last dim of tensor to target length
+    Args:
+        a (b, d, l):
+        tr_seq_len: int
+        pad_value:
+        pad_type:
+    Returns:
 
+    """
+    sr_seq_len = a.shape[-1]
     if tr_seq_len > sr_seq_len:
-        left_pad = int((tr_seq_len - sr_seq_len) / 2)
+        left_pad = int((tr_seq_len - sr_seq_len) / 2) if pad_type == "two" else 0
         right_pad = tr_seq_len - left_pad - sr_seq_len
         p1d = (left_pad, right_pad)
-        # b = a.permute(0, 2, 1)
         b = F.pad(a, p1d, "constant", pad_value)  # (b, word_len, 80) -> # (b, mel_len, 80)
-        b_min, b_max = torch.min(b), torch.max(b)
-        # b = b.permute(0, 2, 1)
-        # psd = psd.unsqueeze(1)  # (b, 1, mel_len, 80)
     else:
-        if len(a.shape) == 4:
-            b = a[:, :, :, :tr_seq_len]
-        elif len(a.shape) == 3:
-            b = a[:, :, :tr_seq_len]
-        else:
-            b = a[:, :tr_seq_len]
+        b = a[..., :tr_seq_len]
     return b
 
 
@@ -157,7 +278,7 @@ def align(
         condition,
         align_len,
         align_att=None,
-        condtype="noseq",
+        condtype="noseq"
 ):
     """
     Align sequential or scala condition given align_len
@@ -510,3 +631,10 @@ def make_pad_mask(lengths, xs=None, length_dim=-1):
         )
         mask = mask[ind].expand_as(xs).to(xs.device)
     return mask
+
+
+if __name__ == '__main__':
+    attn_maps = torch.tensor([[[1, 1, 0]], [1, 1, 1], [1, 1, 0]])
+    diags_attn_mpas = generate_diagal_fromMask(attn_maps)
+    print("previous attn_maps", attn_maps)
+    print("after attn_maps", diags_attn_mpas)

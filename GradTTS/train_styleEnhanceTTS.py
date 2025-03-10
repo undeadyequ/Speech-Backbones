@@ -6,9 +6,9 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # MIT License for more details.
 import sys
-#sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS/model')
-sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones')
-sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS')
+sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS/model')
+#sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones')
+#sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS')
 
 import numpy as np
 from tqdm import tqdm
@@ -30,8 +30,6 @@ from GradTTS.read_model import get_vocoder
 from typing import Union
 from pathlib import Path
 
-
-
 def train_process_cond(configs):
     preprocess_config, model_config, train_config = configs
     log_dir = train_config["path"]["log_dir"]
@@ -45,10 +43,10 @@ def train_process_cond(configs):
     add_blank = preprocess_config["feature"]["add_blank"]
     sample_rate = preprocess_config["feature"]["sample_rate"]
     nsymbols = len(symbols) + 1 if add_blank else len(symbols)
-    out_size = fix_len_compatibility(2 * sample_rate // 256)
+    out_size = fix_len_compatibility(2 * sample_rate // 256)  # 128
     preprocess_dir = preprocess_config["path"]["preprocessed_path"]
-    train_filelist_path = preprocess_dir + "/train.txt"
-    valid_filelist_path = preprocess_dir + "/val.txt"
+    train_filelist_path = preprocess_dir + "/" + preprocess_config["path"]["index_train_f"]
+    valid_filelist_path = preprocess_dir + "/" + preprocess_config["path"]["index_val_f"]
     meta_json_path = preprocess_dir + "/metadata_new.json"
 
     cmudict_path = preprocess_config["path"]["cmudict_path"]
@@ -62,6 +60,8 @@ def train_process_cond(configs):
     n_spks = int(preprocess_config["feature"]["n_spks"])
 
     datatype = preprocess_config["datatype"]
+    psd_gran = preprocess_config["psd_gran"]
+    need_rm_sil = preprocess_config["need_rm_sil"]
 
     # model
     ## Encoder
@@ -86,6 +86,9 @@ def train_process_cond(configs):
     stoc = model_config["decoder"]["stoc"]
     temperature = float(model_config["decoder"]["temperature"])
     n_timesteps = int(model_config["decoder"]["n_timesteps"])
+    melstyle_n = int(model_config["decoder"]["melstyle_n"])
+    psd_n = int(model_config["decoder"]["psd_n"])
+
 
     ### unet
     unet_type = model_config["unet"]["unet_type"]
@@ -101,14 +104,21 @@ def train_process_cond(configs):
     resume_epoch = int(train_config["resume_epoch"])
     save_every = int(train_config["save_every"])
     ckpt = f"{log_dir}models/grad_{resume_epoch}.pt"
+    show_img_per_epoch = float(train_config["show_img_per_epoch"])
 
     # dit_mocha config
     dit_mocha = model_config["dit_mocha"]
-    guided_attn = model_config["loss"]["guided_attn"]
+    stdit = model_config["stdit"]
+    stditMocha = model_config["stditMocha"]
 
+    guided_attn = model_config["loss"]["guided_attn"]
+    diff_model = model_config["diff_model"]
+    ref_encoder = model_config["ref_encoder"]
+    ref_embedder = model_config["ref_embedder"]
 
     # vqvae config
-    vqvae = model_config["vqvae"]
+    tvencoder = model_config["tv_encoder"]
+
 
     # dataset
     train_dataset = TextMelSpeakerEmoDataset(train_filelist_path,
@@ -119,7 +129,8 @@ def train_process_cond(configs):
                                              n_fft, n_feats,
                                              sample_rate, hop_length,
                                              win_length, f_min, f_max,
-                                             datatype=datatype
+                                             datatype=ref_embedder,
+                                             need_rm_sil=need_rm_sil
                                              )
     test_dataset = TextMelSpeakerEmoDataset(valid_filelist_path,
                                             meta_json_path,
@@ -129,7 +140,8 @@ def train_process_cond(configs):
                                             n_fft, n_feats,
                                             sample_rate, hop_length,
                                             win_length, f_min, f_max,
-                                            datatype=datatype
+                                            datatype=ref_embedder,
+                                            need_rm_sil=need_rm_sil
                                             )
 
     batch_collate = TextMelSpeakerEmoBatchCollate()
@@ -142,11 +154,10 @@ def train_process_cond(configs):
                         shuffle=True)
 
     # get test_batch size
-    test_batch = test_dataset.sample_test_batch(size=3)
-
+    test_batch = test_dataset.sample_test_batch(size=4)
 
     # test condition
-    model = CondGradTTSDIT(nsymbols,
+    model = CondGradTTSDIT(nsymbols,   # CHANGE to config
                         n_spks,
                         spk_emb_dim,
                         emo_emb_dim,
@@ -169,23 +180,25 @@ def train_process_cond(configs):
                         att_dim,
                         heads,
                         p_uncond,
-                        model_version="dit_vae",
+                        psd_n,
+                        melstyle_n,  # 768
+                        diff_model=diff_model,
+                        ref_encoder=ref_encoder,
                         guided_attn=guided_attn,
                         dit_mocha_config=dit_mocha,
-                        vqvae=vqvae
+                        stdit_config=stdit,
+                        stditMocha_config=stditMocha,
+                        tvencoder_config=tvencoder
                         ).cuda()
-
-    print(model)
-    """
-    print('Number of encoder parameters = %.2fm' % (model.encoder.nparams / 1e6))
-    print('Number of decoder parameters = %.2fm' % (model.decoder.nparams / 1e6))
-    print('Initializing optimizer...')
-    """
+    with open(f'{log_dir}/model.log', 'a') as f:
+        f.write(str(model))
+        f.write('Number of encoder parameters = %.2fm' % (model.encoder.nparams / 1e6))
+        f.write('Number of decoder parameters = %.2fm' % (model.decoder.nparams / 1e6))
     optimizer = torch.optim.Adam(params=model.parameters(), lr=learning_rate)
     if resume_epoch > 1:
         resume(ckpt, model, optimizer, 1)
 
-    # Create subdir img/model/samples
+    # Create subdir watchImg/model/samples
     Path("{}/img".format(log_dir)).mkdir(exist_ok=True)
     Path("{}/models".format(log_dir)).mkdir(exist_ok=True)
     Path("{}/samples".format(log_dir)).mkdir(exist_ok=True) # ??
@@ -200,70 +213,78 @@ def train_process_cond(configs):
 
     print('Start training...')
     iteration = 0
-    show_img_per_epoch = 5.0
     vocoder = get_vocoder()
 
     for epoch in range(resume_epoch + 1, n_epochs + 1):
         model.eval()
         print('Synthesis...')
-        with torch.no_grad():
-            for item in test_batch:
+        with (torch.no_grad()):
+            for j, item in enumerate(test_batch):
                 x = item['x'].to(torch.long).unsqueeze(0).cuda()
                 x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
                 spk = item['spk'].to(torch.long).cuda()
-                emo, pit, eng, dur, emo_label = None, None, None, None, None
-                if "emo" in item.keys():
-                    emo = item['emo'].cuda()
-                if "pit" in item.keys() and "eng" in item.keys() and "dur" in item.keys():
-                    pit = item["pit"].cuda()
-                    eng = item["eng"].cuda()
-                    dur = item["dur"].cuda()
-                if "emo_label" in item.keys():
-                    emo_label = item["emo_label"].cuda()
-                if "melstyle" in item.keys():
-                    melstyle = item["melstyle"].cuda()
+                emo_label = item["emo_label"].cuda()
+                melstyle = item["melstyle"].cuda()  # (b, d, l)
+                melstyle_lengths = torch.LongTensor([melstyle.shape[-1]]).cuda()
+                i = "spk" + str(spk.item()) + "_emo" + str(emo_label.item()) + "_txt" + str(j)
 
-                i = int(spk.cpu())
-                y_enc, y_dec, self_attns_list, cross_attns_list = model(x,
-                                           x_lengths,
-                                           n_timesteps=n_timesteps,
-                                           temperature=temperature,
-                                           stoc=stoc,
-                                           length_scale=length_scale,
-                                           spk=spk,
-                                           #emo=emo,
-                                           #psd=(pit, eng, dur),
-                                           emo_label=emo_label,
-                                           melstyle=melstyle)
-                # show enc/dec/alignment
-                show_attn = cross_attns_list[0]
+                model_input = {
+                    "x": x,
+                    "x_lengths": x_lengths,
+                    "n_timesteps": n_timesteps,
+                    "temperature": temperature, #
+                    "stoc": stoc,
+                    "spk": spk,
+                    "length_scale": length_scale,
+                    # "emo": torch.randn(batch, style_emb_dim),
+                    # "melstyle": torch.randn(batch, style_emb_dim, mel_max_len),# non-vae
+                    "melstyle": melstyle,
+                    "melstyle_lengths": melstyle_lengths,
+                    "emo_label": emo_label
+                }
+                y_enc, y_dec, mas_attn, self_attns_list, cross_attns_list = model(**model_input)
+
+                # evaluate result
+                ## encoder/dec ouput
                 logger.add_image(f'image_{i}/generated_enc',
                                  plot_tensor(y_enc.squeeze().cpu()),
                                  global_step=iteration, dataformats='HWC')
                 logger.add_image(f'image_{i}/generated_dec',
                                  plot_tensor(y_dec.squeeze().cpu()),
                                  global_step=iteration, dataformats='HWC')
-                logger.add_image(f'image_{i}/alignment',
-                                 plot_tensor(show_attn.squeeze().cpu()),
-                                 global_step=iteration, dataformats='HWC')
-                # show image and audio (show initiate image to check earlierly)
+                ## CrossAttention map
+                #logger.add_image(f'image_{i}/alignment',
+                #                 plot_tensor(cros_attn_00.squeeze().cpu()),
+                #                 global_step=iteration, dataformats='HWC')
+                ## show image and audio (show initiate image to gheck earlierly)
                 if epoch % show_img_per_epoch == 0 or epoch == 1 or epoch == 2 or epoch == 3:
                     save_plot(y_enc.squeeze().cpu(),
                               f'{log_dir}/img/generated_enc_{i}_epoch{epoch}.png')
                     save_plot(y_dec.squeeze().cpu(),
                               f'{log_dir}/img/generated_dec_{i}_epoch{epoch}.png')
-                    save_plot(show_attn.squeeze().cpu(),
-                              f'{log_dir}/img/alignment_{i}_epoch{epoch}.png')
+                    if len(cross_attns_list) != 0:
+                        t1, b1, bt1, h1 = 0, 1, 0, 0  # time, block_n, batch, head
+                        t2, b2, bt2, h2 = 5, 5, 0, 0  # (0, 10, 20, 30, 40, 49), layer = 6
+                        cros_attn_00 = cross_attns_list[t1, b1, bt1, h1]
+                        cros_attn_55 = cross_attns_list[t2, b2, bt2, h2]
+                        save_plot(cros_attn_00.squeeze().cpu(),
+                                  f'{log_dir}/img/cross_attn_t0_b0_{i}_epoch{epoch}.png')
+                        save_plot(cros_attn_55.squeeze().cpu(),
+                                  f'{log_dir}/img/cross_attn_t49_b6_{i}_epoch{epoch}.png')
+
+                    #save_plot(show_attn.squeeze().cpu(),
+                    #          f'{log_dir}/img/alignment_bern_{i}_epoch{epoch}.png')
                     # synthesize audio
                     audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
                     ## create folder if not exist
                     write(f'{log_dir}/samples/sample_{i}_epoch{epoch}.wav', 22050, audio)
-
-
         model.train()
         dur_losses = []
         prior_losses = []
         diff_losses = []
+        monAttn_losses = []
+        commit_losses = []
+        vq_losses = []
 
         with tqdm(loader, total=len(train_dataset) // batch_size) as progress_bar:
             for batch in progress_bar:
@@ -272,23 +293,35 @@ def train_process_cond(configs):
                 y, y_lengths = batch['y'].cuda(), batch['y_lengths'].cuda()
                 spk = batch['spk'].cuda()
                 #emo = batch['emo'].cuda()
-
                 melstyle = batch["melstyle"].cuda()
                 melstyle_len = batch["melstyle_lengths"].cuda()  # Use it rather than x_mask
                 emo_label = batch["emo_label"].cuda()
 
-                dur_loss, prior_loss, diff_loss, monAttn_loss, commit_loss, vq_loss = model.compute_loss(x,
-                                                                     x_lengths,
-                                                                     y,
-                                                                     y_lengths,
-                                                                     spk=spk,
-                                                                     out_size=out_size,
-                                                                     emo=emo,
-                                                                     #psd=(pit, eng, dur),
-                                                                     melstyle=melstyle,
-                                                                     emo_label=emo_label
-                                                                     )
-                loss = sum([dur_loss, prior_loss, diff_loss])
+                #if datatype == "psd" and psd_gran == "frame":
+                #    dur = item["dur"].to(torch.long).squeeze(0).cuda()
+                #    melstyle = torch.repeat_interleave(melstyle, repeats=dur, dim=2)
+                #    assert melstyle.shape[2] == y.shape[2]
+                #if x.shape[1] != melstyle[].shape[2]:
+                #    print("x {} and melstyle {} should have same len".format(x.shape[1], melstyle.shape[2]))
+
+                model_input = {
+                    "x": x,  # (b, p_l)
+                    "x_lengths": x_lengths, # (b,)
+                    "y": y,  # (b, mel_dim, mel_l)
+                    "y_lengths": y_lengths, # (b)
+                    "spk": spk,  # (b)
+                    "out_size": out_size,
+                    "melstyle": melstyle,  # (b, ls_dim, ls_l)
+                    "melstyle_lengths": melstyle_lengths,
+                    "emo_label": emo_label  # (b)
+                }
+
+                #[print(k, v.shape) for k, v in model_input.items() if torch.is_tensor(v)]
+                dur_loss, prior_loss, diff_loss, monAttn_loss, commit_loss, vq_loss = model.compute_loss(**model_input)
+
+                #loss = sum([dur_loss, prior_loss, diff_loss, vq_loss])
+                loss = sum([dur_loss, prior_loss, diff_loss, monAttn_loss, vq_loss])
+
                 loss.backward()
 
                 # clip the gradience
@@ -304,21 +337,42 @@ def train_process_cond(configs):
                                   global_step=iteration)
                 logger.add_scalar('training/diffusion_loss', diff_loss,
                                   global_step=iteration)
+                logger.add_scalar('training/monAttn_loss', monAttn_loss,
+                                  global_step=iteration)
+                logger.add_scalar('training/vq_loss', vq_loss,
+                                  global_step=iteration)
+
                 logger.add_scalar('training/encoder_grad_norm', enc_grad_norm,
                                   global_step=iteration)
                 logger.add_scalar('training/decoder_grad_norm', dec_grad_norm,
                                   global_step=iteration)
+                #msg = (f'Epoch: {epoch}, iteration: {iteration} | dur_loss: {dur_loss.item()}, '
+                #       f'prior_loss: {prior_loss.item()}, diff_loss: {diff_loss.item()}, '
+                #       f'monAttn_loss: {monAttn_loss.item()}, commit_loss: {commit_loss.item()}, '
+                #       f'vq_loss: {vq_loss.item()}')
 
-                msg = f'Epoch: {epoch}, iteration: {iteration} | dur_loss: {dur_loss.item()}, prior_loss: {prior_loss.item()}, diff_loss: {diff_loss.item()}'
+                msg = (f'Epoch: {epoch}, iteration: {iteration} | dur_loss: {dur_loss.item()}, '
+                       f'prior_loss: {prior_loss.item()}, diff_loss: {diff_loss.item()}, '
+                       f'monAttn_loss: {monAttn_loss.item()}, '
+                       #f'commit_loss: {commit_loss.item()}, '
+                       f'vq_loss: {vq_loss.item()}')
+
                 progress_bar.set_description(msg)
                 dur_losses.append(dur_loss.item())
                 prior_losses.append(prior_loss.item())
                 diff_losses.append(diff_loss.item())
+                monAttn_losses.append(monAttn_loss.item())
+                commit_losses.append(commit_loss.item())
+                vq_losses.append(vq_loss.item())
                 iteration += 1
 
         msg = 'Epoch %d: duration loss = %.3f ' % (epoch, np.mean(dur_losses))
         msg += '| prior loss = %.3f ' % np.mean(prior_losses)
         msg += '| diffusion loss = %.3f\n' % np.mean(diff_losses)
+        msg += '| monAttn loss = %.3f\n' % np.mean(monAttn_losses)
+        msg += '| commit loss = %.3f\n' % np.mean(commit_losses)
+        msg += '| vq loss = %.3f\n' % np.mean(vq_losses)
+
         with open(f'{log_dir}/train.log', 'a') as f:
             f.write(msg)
         if epoch % save_every > 0:
@@ -340,9 +394,6 @@ def train_process_cond(configs):
         )
         #ckpt = model.state_dict()
         #torch.save(ckpt, f=f"{log_dir}/models/grad_{epoch}.pt")
-
-
-
 
 def resume(
     checkpoint: Union[str, Path],
@@ -370,9 +421,8 @@ def resume(
 
 if __name__ == "__main__":
     import argparse
-    #config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
-    config_dir = "/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS/config/ESD"
-
+    config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
+    #config_dir = "/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS/config/ESD"
     parser = argparse.ArgumentParser()
     parser.add_argument("--restore_step", type=int, default=250000)
     parser.add_argument(
@@ -381,21 +431,20 @@ if __name__ == "__main__":
         type=str,
         #required=True,
         help="path to preprocess.yaml",
-        default=config_dir + "/preprocess_gradTTS.yaml",
+        default=config_dir + "/preprocess_styleAlignedTTS.yaml",
     )
     parser.add_argument(
         "-m", "--model_config", type=str,
         #required=True,
         help="path to model.yaml",
-        default=config_dir + "/model_styleAlignedTTS_vq_ditMocha.yaml",
+        default=config_dir + "/model_styleAlignedTTS_guidloss_codec.yaml",
         #default = config_dir + "/model_gradTTS_linear.yaml"
-
     )
     parser.add_argument(
         "-t", "--train_config", type=str,
         #required=True,
         help="path to train.yaml",
-        default=config_dir + "/train_gradTTS.yaml"
+        default=config_dir + "/train_styleAlignedTTS.yaml"
     )
     args = parser.parse_args()
 

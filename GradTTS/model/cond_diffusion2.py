@@ -9,15 +9,7 @@ import torch
 import torchvision.transforms.functional as F
 from GradTTS.model.base import BaseModule
 from GradTTS.model.diffusion import *
-from GradTTS.model.estimator import GradLogPEstimator2dCond, DiTMocha, STDit, STDitCross, STDitMocha
-
-estimatorbyBlock = {
-    "unet": GradLogPEstimator2dCond,
-    "dit": DiTMocha,
-    "STDit": STDit,        # Dit from StableTTS
-    "STDitDua": STDitCross,   # STDit + cross attention
-    "STDitMocha": STDitMocha # STDit + cross attention with Mocha
-}
+from GradTTS.model.estimator import GradLogPEstimator2dCond, DiTMocha, STDit
 
 class CondDiffusion(BaseModule):
     """
@@ -70,19 +62,21 @@ class CondDiffusion(BaseModule):
         # initiate estimates with input
         if self.estimator_type == "dit":
             kwargs = dit_mocha_config
+            self.estimator = DiTMocha(**kwargs)
         elif self.estimator_type == "STDit":
             self.emo_mlp = torch.nn.Sequential(torch.nn.Linear(5, 128), Mish(),
                                                torch.nn.Linear(128, stdit_config["gin_channels"]))
-            kwargs = stdit_config
+            self.estimator = STDit(bAttn_type="base", **stdit_config)
+        elif self.estimator_type == "STDitCross":
+            self.emo_mlp = torch.nn.Sequential(torch.nn.Linear(5, 128), Mish(),
+                                               torch.nn.Linear(128, stdit_config["gin_channels"]))
+            self.estimator = STDit(bAttn_type="cross", **stditMocha_config)
         elif self.estimator_type == "STDitMocha":
             self.emo_mlp = torch.nn.Sequential(torch.nn.Linear(5, 128), Mish(),
                                                torch.nn.Linear(128, stdit_config["gin_channels"]))
-            kwargs = stditMocha_config
+            self.estimator = STDit(bAttn_type="mocha", **stditMocha_config)
         else:
             kwargs = None
-
-        # esitmator
-        self.estimator = estimatorbyBlock[estimator_type](**kwargs)
 
     def forward_diffusion(self, x0, mask, mu, t):
         time = t.unsqueeze(-1).unsqueeze(-1)
@@ -133,16 +127,14 @@ class CondDiffusion(BaseModule):
         cross_attns_list = []
         attn_img_time_ind = (0, 10, 20, 30, 40, 49)
 
-        if self.estimator_type == "stdit":
+        if "STDit" in self.estimator_type:
             emo_label = torch.nn.functional.one_hot(emo_label, num_classes=5).to(torch.float)
             emo_label = self.emo_mlp(emo_label)
-
         for i in range(n_timesteps):
-            t = (1.0 - (i + 0.5) * h) * torch.ones(z.shape[0], dtype=z.dtype,
-                                                   device=z.device)
+            #print("{}th time".format(i))
+            t = (1.0 - (i + 0.5) * h) * torch.ones(z.shape[0], dtype=z.dtype, device=z.device)
             time = t.unsqueeze(-1).unsqueeze(-1)
-            noise_t = get_noise(time, self.beta_min, self.beta_max,
-                                cumulative=False)
+            noise_t = get_noise(time, self.beta_min, self.beta_max, cumulative=False)
 
             if self.estimator_type == "dit":
                 x = torch.stack([xt, mu], dim=1).transpose(2, 3)             # (b, 2, T, 80)
@@ -155,22 +147,27 @@ class CondDiffusion(BaseModule):
                     r=r,
                     t=t)
                 score_emo = score_emo[:, 0, :, :].transpose(1, 2)  ## ?? Tempt
-
-            elif self.estimator_type == "dit":
+            elif self.estimator_type == "STDit":
                 # for stDit
                 score_emo = self.estimator(
-                    t=t, x=xt, mask=mask, mu=mu, c=emo_label
-                )
+                    t=t, x=xt, mask=mask, mu=mu, c=emo_label)
                 attn_selfs, attn_crosses = None, None
                 # score_emo: (N, out_channels, H, W), attn_crosses: [t, block_n, b, HW?, T]
+            # t: (b, ), xt: (b, mel_dim, cut_l), mask: (b, 1, cut_l), mu: (b, mel_dim, cut_l), emo_label:(b, emo_dim), melstyle:(b, mel_dim, cut_l)
+            elif self.estimator_type == "STDitMocha" or self.estimator_type == "STDitCross":
+                # for stDit
+                score_emo, attn_crosses = self.estimator(
+                    t=t, x=xt, mask=mask, mu=mu, c=emo_label, r=melstyle, attnCross=attn_mask)
+                attn_selfs = None
             else:
                 raise IOError("Estimator type is wrong")
 
             # Get dxt
             dxt_det = 0.5 * (mu - xt) - score_emo
-            if i in attn_img_time_ind:
-                self_attns_list.append(attn_selfs)
-                cross_attns_list.append(attn_crosses)
+            if self.estimator_type == "STDitMocha" or self.estimator_type == "STDitCross":
+                if i in attn_img_time_ind:
+                    self_attns_list.append(attn_selfs)
+                    cross_attns_list.append(attn_crosses)
 
             ## adds stochastic term
             if stoc:
@@ -183,7 +180,10 @@ class CondDiffusion(BaseModule):
                 dxt = 0.5 * (mu - xt - score_emo)
                 dxt = dxt * noise_t * h
             xt = (xt - dxt) * mask
-        return xt, self_attns_list, cross_attns_list
+
+        #self_attns = torch.stack(self_attns_list, dim=0)
+        cross_attns = torch.stack(cross_attns_list, dim=0)
+        return xt, self_attns_list, cross_attns
 
 
     def compute_loss(self,
@@ -196,7 +196,21 @@ class CondDiffusion(BaseModule):
                      melstyle=None,
                      emo_label=None,
                      align_len=None,
+                     attnCross=None
                      ):
+        """
+
+        Args:
+            x0,       # (b, mel_dim, cut_l)
+            mask,  # (b, )
+            mu,    # (b, mel_dim, cut_l)
+            offset,
+            spk: # (b, )
+            psd: # (b, )
+            melstyle:  # (b, mel_dim, cut_l)
+            emo_label:      # (b, )
+        Returns:
+        """
         t = torch.rand(x0.shape[0],
                        dtype=x0.dtype,
                        device=x0.device,
@@ -217,19 +231,24 @@ class CondDiffusion(BaseModule):
                 y1=spk,
                 y2=emo_label,
                 r=melstyle,
-                t=t
-            )  # (b, T, 80)
+                t=t)  # (b, T, 80)
             noise_estimation = noise_estimation[:, 0, :, :]  ## ?? Tempt
             noise_estimation = noise_estimation.transpose(1, 2)
             noise_estimation = noise_estimation * mask
             attn_selfs, attn_crosses = None, None
-        elif self.estimator_type == "stdit":
+        elif self.estimator_type == "STDit":
             emo_label = torch.nn.functional.one_hot(emo_label, num_classes=5).to(torch.float)
             emo_label = self.emo_mlp(emo_label)
-            noise_estimation = self.estimator(
-                t=t, x=xt, mask=mask, mu=mu, c=emo_label, r=melstyle
-            )
-            attn_selfs, attn_crosses = None, None
+            # t: (b, ), xt: (b, mel_dim, cut_l), mask: (b, 1, cut_l), mu: (b, mel_dim, cut_l), emo_label:(b, emo_dim), melstyle:(b, mel_dim, cut_l)
+            noise_estimation = self.estimator(t=t, x=xt, mask=mask, mu=mu, c=emo_label, r=melstyle)
+            attn_selfs, attn_crosses= None, None
+        elif self.estimator_type == "STDitMocha":
+            emo_label = torch.nn.functional.one_hot(emo_label, num_classes=5).to(torch.float)
+            emo_label = self.emo_mlp(emo_label)
+            # t: (b, ), xt: (b, mel_dim, cut_l), mask: (b, 1, cut_l), mu: (b, mel_dim, cut_l), emo_label:(b, emo_dim), melstyle:(b, mel_dim, cut_l)
+            noise_estimation, attn_crosses = self.estimator(t=t, x=xt, mask=mask, mu=mu, c=emo_label, r=melstyle,
+                                                            attnCross=attnCross)
+            attn_selfs = None
         else:
             print("Wrong estimation")
             noise_estimation, attn_selfs, attn_crosses = None, None, None
@@ -238,7 +257,6 @@ class CondDiffusion(BaseModule):
         loss = torch.sum((noise_estimation + z) ** 2) / (torch.sum(mask) * self.n_feats)
         #loss = mean_flat((noise_estimation - z) ** 2).mean()      ######## TEST for pure normalize loss ########
         return loss, xt, attn_selfs, attn_crosses
-
 
 def mean_flat(tensor):
     """

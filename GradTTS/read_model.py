@@ -4,7 +4,7 @@ import torch
 from pathlib import Path
 
 from GradTTS.text.symbols import symbols
-from GradTTS.model import GradTTS, CondGradTTS
+from GradTTS.model import GradTTS, CondGradTTS, CondGradTTSDIT
 from typing import Union
 
 
@@ -16,7 +16,6 @@ from models import Generator as HiFiGAN
 def get_model(configs, model="gradtts_lm", chk_pt=None):
     """
     Get Model
-
     """
     preprocess_config, model_config, train_config = configs
 
@@ -49,6 +48,8 @@ def get_model(configs, model="gradtts_lm", chk_pt=None):
     temperature = float(model_config["decoder"]["temperature"])
     n_timesteps = int(model_config["decoder"]["n_timesteps"])
     sample_channel_n = int(model_config["decoder"]["sample_channel_n"])
+    melstyle_n = int(model_config["decoder"]["melstyle_n"])
+    psd_n = int(model_config["decoder"]["psd_n"])
 
     ### unet
     unet_type = model_config["unet"]["unet_type"]
@@ -57,28 +58,18 @@ def get_model(configs, model="gradtts_lm", chk_pt=None):
     heads = model_config["unet"]["heads"]
     p_uncond = model_config["unet"]["p_uncond"]
 
-    """
-    if model == "gradtts_lm":
-        return CondGradTTSLDM(
-            nsymbols,
-            n_spks,
-            spk_emb_dim,
-            emo_emb_dim,
-            n_enc_channels,
-            filter_channels,
-            filter_channels_dp,
-            n_heads,
-            n_enc_layers,
-            enc_kernel,
-            enc_dropout,
-            window_size,
-            n_feats,
-            dec_dim,
-            beta_min,
-            beta_max,
-            pe_scale,
-            att_type)
-    """
+    # dit_mocha config
+    dit_mocha = model_config["dit_mocha"]
+    stdit = model_config["stdit"]
+    stditMocha = model_config["stditMocha"]
+
+    guided_attn = model_config["loss"]["guided_attn"]
+    diff_model = model_config["diff_model"]
+    ref_encoder = model_config["ref_encoder"]
+    ref_embedder = model_config["ref_embedder"]
+    # vqvae config
+    vqvae = model_config["vqvae"]
+
     if model == "gradtts_cross" or model == "gradtts":
         generator = CondGradTTS(nsymbols,
                             n_spks,
@@ -105,7 +96,88 @@ def get_model(configs, model="gradtts_lm", chk_pt=None):
                             p_uncond)
         load_model_state(chk_pt, generator)
         generator.cuda().eval()
+    elif "STDit" in model:
+        generator = CondGradTTSDIT(
+            nsymbols,
+            n_spks,
+            spk_emb_dim,
+            emo_emb_dim,
+            n_enc_channels,
+            filter_channels,
+            filter_channels_dp,
+            n_heads,
+            n_enc_layers,
+            enc_kernel,
+            enc_dropout,
+            window_size,
+            n_feats,
+            dec_dim,
+            sample_channel_n,
+            beta_min,
+            beta_max,
+            pe_scale,
+            unet_type,
+            att_type,
+            att_dim,
+            heads,
+            p_uncond,
+            psd_n,
+            melstyle_n,  # 768
+            diff_model=diff_model,
+            ref_encoder=ref_encoder,
+            guided_attn=guided_attn,
+            dit_mocha_config=dit_mocha,
+            stdit_config=stdit,
+            stditMocha_config=stditMocha,
+            vqvae=vqvae
+        )
+    else:
+        pass
+
+    load_model_state(chk_pt, generator)
+    generator.cuda().eval()
     return generator
+
+import yaml
+
+
+def read_model_configs(config_dir, ptm_configs=tuple()):
+    prep, model, train = ptm_configs
+    preprocess_config = yaml.load(
+        open(config_dir + "/" + prep, "r"), Loader=yaml.FullLoader
+    )
+    model_config = yaml.load(open(
+        config_dir + "/" + model, "r"), Loader=yaml.FullLoader)
+    train_config = yaml.load(open(
+        config_dir + "/" + train, "r"), Loader=yaml.FullLoader)
+
+    return preprocess_config, model_config, train_config
+
+
+def modify_submodel_config(ptm_configs, prep_mody=None, model_mody=None, train_mody=None):
+    prep, model, train = ptm_configs
+    return adjust_config(prep, prep_mody), adjust_config(model, model_mody), adjust_config(train, train_mody)
+
+
+def adjust_config(origin_dict, mody=None):
+    adjusted_config = origin_dict.copy()
+    if mody is None:
+        return origin_dict
+    else:
+        for k, v in mody.items():
+            if isinstance(v, dict):
+                for k1, v in v.items():
+                    if k1 in adjusted_config[k].keys():
+                        adjusted_config[k][k1] = v
+                    else:
+                        IOError(f"{k1} is not in given p/t/m_config")
+            else:
+                if k in adjusted_config.keys():
+                    adjusted_config[k] = v
+                else:
+                    IOError(f"{k} is not in given p/t/m_config")
+        return adjusted_config
+
 
 def load_model_state(checkpoint: Union[str, Path], model: torch.nn.Module, ngpu=1):
     ckpt_states = torch.load(

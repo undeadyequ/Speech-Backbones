@@ -10,7 +10,7 @@ import math
 import torch
 from einops import rearrange
 
-from model.base import BaseModule
+from GradTTS.model.base import BaseModule
 import matplotlib.pyplot as plt
 from GradTTS.utils import save_plot
 

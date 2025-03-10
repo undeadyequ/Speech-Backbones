@@ -9,6 +9,24 @@ from GradTTS.model.utils import fix_len_compatibility
 import numpy as np
 from tqdm import tqdm
 
+def convert_to_generator_input(model_n, x, x_lengths, time_steps, temperature, stoc, spk_tensor, length_scale,
+                            emo_tensor, melstyle_tensor, guidence_strength):
+    if "STDit" in model_n:
+        input = {
+            "x": x,
+            "x_lengths": x_lengths,
+            "n_timesteps": time_steps,
+            "temperature": temperature, #
+            "stoc": stoc,
+            "spk": spk_tensor,
+            "length_scale": length_scale,
+            # "emo": torch.randn(batch, style_emb_dim),
+            # "melstyle": torch.randn(batch, style_emb_dim, mel_max_len),# non-vae
+            "melstyle": melstyle_tensor,
+            "emo_label": emo_tensor
+        }
+    return input
+
 def convert_originConfig_to_styleEnhanceConfig(train_config, preprocess_config, model_config):
     log_dir = train_config["path"]["log_dir"]
 

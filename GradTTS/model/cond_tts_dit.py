@@ -10,15 +10,19 @@ import math
 import random
 
 import torch
-from GradTTS.model import monotonic_align
 from GradTTS.model.base import BaseModule
 from GradTTS.model.encoder.text_encoder import TextEncoder
 from GradTTS.model.diffusion import Mish
 from GradTTS.model.cond_diffusion2 import CondDiffusion
 from GradTTS.model.utils import (sequence_mask, generate_path, duration_loss,
-                                 fix_len_compatibility, align)
+                                 fix_len_compatibility, align, get_diag_from_dur2, align_a2b_padcut, cut_pad_start_end)
 from GradTTS.modules.vqpe import VQProsodyEncoder
 from GradTTS.model.guided_loss import GuidedAttentionLoss
+from GradTTS.model.utils import search_ma
+from GradTTS.utils import index_nointersperse
+from GradTTS.text import symbols
+from GradTTS.model.utils import generate_diagal_fromMask
+from GradTTS.model.encoder.ref_encoder import TVEncoder
 
 ADD_COND_TO_ENC = True
 USE_MUY = True
@@ -49,13 +53,15 @@ class CondGradTTSDIT(BaseModule):
                  att_dim, 
                  heads, 
                  p_uncond,
-                 psd_n=3,
-                 melstyle_n=768,  # 768
-                 model_version="dit_vae",  # {dit/unet}_{vae/ssl}
+                 psd_n,
+                 melstyle_n,  # 768
+                 diff_model="STDitMocha",
+                 ref_encoder="mlp",
                  guided_attn=False,
                  dit_mocha_config=None,
                  stdit_config=None,
                  stditMocha_config=None,
+                 tvencoder_config=None,
                  vqvae=None,
                  ):
         super(CondGradTTSDIT, self).__init__()
@@ -77,18 +83,19 @@ class CondGradTTSDIT(BaseModule):
         self.pe_scale = pe_scale
         self.unet_type = unet_type
         self.att_type = att_type
-        self.model_version = model_version
         self.guided_attn = guided_attn
 
-        self.estimator_type, self.ref_embed_type = self.model_version.split("_")
+        self.estimator_type, self.ref_encode_type = diff_model, ref_encoder
         
         if n_spks > 1:
             self.spk_emb = torch.nn.Embedding(n_spks, spk_emb_dim)
         #self.emo_emb = torch.nn.Embedding(5, emo_emb_dim)
         self.spk_mlp = torch.nn.Sequential(torch.nn.Linear(spk_emb_dim, spk_emb_dim * 4), Mish(),
                                            torch.nn.Linear(spk_emb_dim * 4, n_feats))
+
         self.emo_mlp = torch.nn.Sequential(torch.nn.Linear(emo_emb_dim, emo_emb_dim), Mish(),
                                            torch.nn.Linear(emo_emb_dim, n_feats))
+
         self.psd_mlp = torch.nn.Sequential(torch.nn.Linear(psd_n, psd_n * 4), Mish(),
                                            torch.nn.Linear(psd_n * 4, n_feats))
         self.encoder = TextEncoder(n_vocab, n_feats, n_enc_channels, 
@@ -105,14 +112,20 @@ class CondGradTTSDIT(BaseModule):
                                      dit_mocha_config=dit_mocha_config,
                                      stditMocha_config=stditMocha_config,
                                      stdit_config=stdit_config)
-        self.melstyle_mlp = torch.nn.Sequential(torch.nn.Linear(melstyle_n, melstyle_n), Mish(),
-                                           torch.nn.Linear(melstyle_n, n_feats))
-        
-        if self.ref_embed_type == "vae":
+
+        # mlp, vae, psdMlp
+        if self.ref_encode_type == "vae":
             self.vqpe = VQProsodyEncoder(**vqvae)
+        elif self.ref_encode_type == "vaeEma":
+            self.tv_encoder = TVEncoder(**tvencoder_config)
+        else:
+            self.melstyle_mlp = torch.nn.Sequential(torch.nn.Linear(melstyle_n, melstyle_n), Mish(),
+                                                    torch.nn.Linear(melstyle_n, n_feats))
 
         if self.guided_attn:
             self.guided_attn = GuidedAttentionLoss(sigma=0.4, alpha=1.0)
+
+        self.monotonic_approach = stditMocha_config["monotonic_approach"]
 
     def predict_prior(self,
                       x,
@@ -156,20 +169,28 @@ class CondGradTTSDIT(BaseModule):
                 psd=None,
                 emo_label=None,
                 melstyle=None,
+                melstyle_lengths=None,
                 guidence_strength=3.0,
-                attn_hardMask=None
+                attn_hardMask=None,
+                seed=1
                 ):
+        torch.manual_seed(seed)
         x, x_lengths = self.relocate_input([x, x_lengths])
 
         # Embed condition
         spk_emb = self.spk_mlp(self.spk_emb(spk))
-                
-        if self.ref_embed_type == "vae":  # melstyle = mel
+        if self.ref_encode_type == "vae":  # melstyle = mel
             melstyle_t = melstyle.transpose(1, 2)
             melstyle, _, _, _ = self.vqpe(melstyle_t)  # (b, mel_len, dict_dim)
             #melstyle = self.melstyle_mlp(melstyle_zq)  # temparally
+        elif self.ref_encode_type == "vaeEma":
+            melstyle_mask = torch.unsqueeze(sequence_mask(melstyle_lengths, melstyle.size(2)), 1).to(x.dtype)  # (b, 1, mel_len)
+            melstyle_beforeVQ, melstyle_lengths, _ = self.tv_encoder(melstyle, melstyle_mask)  # IN/OUT: (b, dict_dim, mel_len)
         else:
-            melstyle = self.melstyle_mlp(melstyle.transpose(1, 2))   # (b, mel_len, 80)
+            if melstyle.shape[1] == 3:
+                p_style_dur = melstyle[:, 2, :]
+                melstyle = melstyle[:, :2, :]
+            melstyle = self.melstyle_mlp(melstyle.transpose(1, 2)).transpose(1, 2)   # (b, mel_len, 80)
 
         # get prior
         mu_y, y_mask, y_max_length, attn, attn_mask = self.predict_prior(x, x_lengths, spk_emb, length_scale)
@@ -179,17 +200,29 @@ class CondGradTTSDIT(BaseModule):
         variance = torch.randn_like(mu_y, device=mu_y.device) / temperature
         z = mu_y + variance
 
-        if attn_hardMask is not None:
-            #attn_hardMask_max = torch.max(attn_hardMask)
-            attn_hardMask = torch.ones_like(attn_hardMask) - attn_hardMask
-            attn_hardMask = torch.matmul(attn.transpose(2, 3), attn_hardMask)  # (1,1, mu_y/l_q, l_k)
-            attn_hardMask = attn_hardMask.unsqueeze(3).repeat(1, 1, 1, 80, 1)  # (1,1, l_q, 80, l_k)
-            attn_hardMask = attn_hardMask.view(1, 1, -1, attn_hardMask.shape[-1]) # (1,1, l_q * 80, l_k)
-            #attn_hardMask_max = torch.max(attn_hardMask)
-            attn_hardMask = attn_hardMask>0
-            attn_hardMask = ~attn_hardMask
+        # Generate sample by performing reverse dynamics
+        #melstyle = melstyle.transpose(1, 2)
 
-        # Generate sample by performing reverse dynamics 
+        # create attnCross_mask (monotoic attention mask)
+
+        if self.estimator_type == "STDitMocha":
+            if self.monotonic_approach == "hard_phoneme":
+                attnCross_mask = get_attnCross_mask(attnXy=attn.squeeze(1), p_style_dur=p_style_dur)
+                #attnCross_mask = None
+            elif self.monotonic_approach == "hard":
+                attn_mask_cross = y_mask.repeat(1, 1, melstyle.shape[2]).transpose(1, 2)         # (b, tq, ts) <- ts is not masked
+                # print("before diag:", attn_mask_cross)
+                #attnCross_mask = generate_diagal_fromMask(attn_mask_cross)
+                attnCross_mask = None
+            elif self.monotonic_approach == "guidloss" or self.monotonic_approach == "mocha":
+                attnCross_mask = None  # (b, tq, ts)
+            elif self.monotonic_approach == "mas":
+                attnCross_mask = search_ma(mu_y, melstyle, y_mask)
+            else:
+                attnCross_mask = y_mask.repeat(1, melstyle.shape[2], 1).transpose(1, 2)
+        else:
+            attnCross_mask = None
+
         decoder_outputs, self_attns_list, cross_attns_list = self.decoder(z,
                                        y_mask,
                                        mu_y,
@@ -202,8 +235,7 @@ class CondGradTTSDIT(BaseModule):
                                        align_len=mu_y.shape[-1],
                                        align_mtx=attn,
                                        guidence_strength=guidence_strength,
-                                       attn_mask=attn_hardMask
-                                       )
+                                       attn_mask=attnCross_mask)
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
         return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length], self_attns_list, cross_attns_list
     
@@ -217,6 +249,7 @@ class CondGradTTSDIT(BaseModule):
                      emo=None,
                      psd=None,
                      melstyle=None,
+                     melstyle_lengths=None,
                      emo_label=None
                      ):
         """
@@ -224,23 +257,39 @@ class CondGradTTSDIT(BaseModule):
             1. duration loss: loss between predicted token durations and those extracted by Monotinic Alignment Search (MAS).
             2. prior loss: loss between mel-spectrogram and encoder outputs.
             3. diffusion loss: loss between gaussian noise and its reconstruction by diffusion-based decoder.
-            
         Args:
-            x (torch.Tensor): batch of texts, converted to a tensor with phoneme embedding ids.
-            x_lengths (torch.Tensor): lengths of texts in batch.
-            y (torch.Tensor): batch of corresponding mel-spectrograms.
-            y_lengths (torch.Tensor): lengths of mel-spectrograms in batch.
-            out_size (int, optional): length (in mel's sampling rate) of segment to cut, on which decoder will be trained.
+            x (b, p_l):  batch of texts, converted to a tensor with phoneme embedding ids.
+            x_lengths (b,): lengths of texts in batch.
+            y (b, mel_dim, mel_l): batch of corresponding mel-spectrograms.
+            y_lengths (b, ): lengths of mel-spectrograms in batch.
+            out_size (int): length (in mel's sampling rate) of segment to cut, on which decoder will be trained.
                 Should be divisible by 2^{num of UNet downsamplings}. Needed to increase batch size.
+            melstyle (b, ls_dim, ls_l)
+            emo_label (b,)
+
+        attn_mask: (b, p_l, m_l)                # xy_attn
+        attn_cross_mask: (b)
+        attn_cross_diag_mask: (b, m_l, s_l)     # ystyle_attn
+
         """
         x, x_lengths, y, y_lengths = self.relocate_input([x, x_lengths, y, y_lengths])
 
-        # melstyle by vqvae           
-        if self.ref_embed_type == "vae":  # melstyle = mel
+        # Melstyle embedding
+        if self.ref_encode_type == "vae":  # melstyle = mel
             melstyle_t = melstyle.transpose(1, 2)
             melstyle, commit_loss, vq_loss, codes = self.vqpe(melstyle_t)  # (b, mel_len, dict_dim)
+
+        elif self.ref_encode_type == "vaeEma":
+            melstyle_mask = torch.unsqueeze(sequence_mask(melstyle_lengths, melstyle.size(2)), 1).to(x.dtype)  # IN/OUT: (b, dict_dim, mel_len)
+            melstyle_beforeVQ, melstyle, vq_loss = self.tv_encoder(melstyle, melstyle_mask)  # (b, mel_len, dict_dim)
+            commit_loss = torch.tensor(0.0, dtype=torch.float32)
         else:
-            melstyle = self.melstyle_mlp(melstyle.transpose(1, 2))   # (b, mel_len, 80)
+            if melstyle.shape[1] == 3:
+                p_style_dur = melstyle[:, 2, :].unsqueeze(1)
+                melstyle = melstyle[:, :2, :]
+            melstyle = self.melstyle_mlp(melstyle.transpose(1, 2)).transpose(1, 2)   # (b, mel_len, 80)
+            if melstyle.shape[1] == 3:
+                melstyle = torch.concatenate([melstyle, p_style_dur], dim=1)  # add PSD to cutoff by once
 
         # Get mu_x (encoded x) and logw (log-scaled token durations)
         mu_x, logw, x_mask = self.encoder(x, x_lengths, spk)
@@ -250,35 +299,49 @@ class CondGradTTSDIT(BaseModule):
 
         # Use gd logw_ by attn which predicted by MAS (find most likely alignment `attn` between text and mel-spectrogram)
         with torch.no_grad():
-            attn = search_ma(mu_x, y, attn_mask, xy_dim=self.n_feats)
+            attn = search_ma(mu_x, y, attn_mask, xy_dim=self.n_feats)  # attn value = 1
             attn = attn.detach()
 
         # Duration loss between logw and logw_
         logw_ = torch.log(1e-8 + torch.sum(attn.unsqueeze(1), -1)) * x_mask
         dur_loss = duration_loss(logw, logw_, x_lengths)
 
-        # Align melstyle to mu_y length
-        melstyle_align = align(melstyle, y.shape[-1], attn, condtype="seq")
+        # Align melstyle to mu_y for cut
+        if melstyle.shape[2] != y.shape[2]:
+            #print("Align melstyle to y length!")
+            melstyle = align_a2b_padcut(melstyle, y.shape[-1], pad_value=0, pad_type="right")   # melstyle.shape[2] = y.shape[2]
 
         # Cut a small segment of mel-spectrogram (to increase batch size)
-        y, y_lengths, y_mask, melstyle_cond, attn = cutoff_inputs(y, y_lengths, y_mask, melstyle_align, attn, out_size,
-                                                             y_dim=self.n_feats)
+        y, y_lengths, y_mask, melstyle_cond, attn = cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, out_size,
+                                                             y_dim=self.n_feats) # melstyle.shape[2] = y.shape[2]
+        # Create cross_attn mask
+        if self.monotonic_approach == "hard_phoneme":
+            p_style_dur = melstyle_cond[:, -1, :]     # (b, s_l), 0001111, s_l=m_l
+            melstyle_cond = melstyle_cond[:, :-1, :]  # (b, D, m_l)
+
+        # create attnCross_mask (monotoic attention mask)
+        if self.monotonic_approach == "STDitMocha":
+            attnCross_mask = get_attnCross_mask(attnXy=attn, p_style_dur=p_style_dur)
+        else:
+            attnCross_mask = None
 
         # Get mu_y by attn
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2)) # attn: (b, mu_x_len, mu_y_len)
         mu_y = mu_y.transpose(1, 2)
 
         # Difussion loss
-        diff_loss, xt, attn_selfs, attn_crosses = self.decoder.compute_loss(y,
-                                                  y_mask,
-                                                  mu_y,
-                                                  offset=1e-5,
-                                                  spk=spk,
-                                                  psd=psd,
-                                                  melstyle=melstyle_cond,
-                                                  emo_label=emo_label,
-                                                  align_len=mu_y.shape[-1]
-                                                  )   # attn_maps: ((b, h, l_q * d_q, l_k), (b, h, l_q * d_q, l_k))
+        diff_loss, xt, attn_selfs, attn_crosses = self.decoder.compute_loss(
+            y,       # (b, mel_dim, cut_l)
+            y_mask,  # (b, )
+            mu_y,    # (b, mel_dim, cut_l)
+            offset=1e-5,
+            spk=spk, # (b, )
+            psd=psd, # (b, )
+            melstyle=melstyle_cond,  # (b, mel_dim, cut_l)
+            emo_label=emo_label,     # (b, )
+            align_len=mu_y.shape[-1],
+            attnCross=attnCross_mask
+        )   # attn_maps: ((b, h, l_q * d_q, l_k), (b, h, l_q * d_q, l_k))
         
         # Prior loss
         prior_loss = torch.sum(0.5 * ((y - mu_y) ** 2 + math.log(2 * math.pi)) * y_mask)
@@ -290,10 +353,13 @@ class CondGradTTSDIT(BaseModule):
         if self.guided_attn:
             # Semi-ground truth: rough digonal
             monAttn_loss = 0
+            blk, batch, head, ql, kl = attn_crosses.shape
             for attn_cross in attn_crosses:
                 ilens = y_lengths
-                olens = y_lengths * 80 / 2 ** 2  # patchsize = 2
-                monAttn_loss += self.guided_attn(attn_cross, olens, ilens, attn_cross.shape[-2:])
+                #olens = y_lengths * 80 / 2 ** 2  # patchsize = 2
+                olens = y_lengths
+                for h in range(head):
+                    monAttn_loss += self.guided_attn(attn_cross[:, h, :, :], olens, ilens, attn_cross.shape[-2:])
             """Ground Truth
             attn_muy_style = torch.rand_like(attn)
             assert attn_muy_style.size() == attn_maps.size()   # how ?
@@ -301,14 +367,52 @@ class CondGradTTSDIT(BaseModule):
             monAttn_loss = mon_attention_loss(attn_maps, mon_attention_mask)
             """
         else:
-            monAttn_loss = torch.tensor(0.0, dtype=torch.float32)
-            
+            monAttn_loss = torch.tensor(0.0, dtype=torch.float32, requires_grad=False)
         # VAE loss
-        if self.ref_embed_type == "vae":
+        if self.ref_encode_type == "vae" or self.ref_encode_type == "vaeEma":
             return dur_loss, prior_loss, diff_loss, monAttn_loss, commit_loss, vq_loss
         else:
-            commit_loss, vq_loss = torch.tensor(0.0, dtype=torch.float32), torch.tensor(0.0, dtype=torch.float32)
+            commit_loss, vq_loss = (torch.tensor(0.0, dtype=torch.float32, requires_grad=False),
+                                    torch.tensor(0.0, dtype=torch.float32, requires_grad=False))
             return dur_loss, prior_loss, diff_loss, monAttn_loss, commit_loss, vq_loss
+
+def get_attnCross_mask(attnXy, attnPs=None, p_style_dur=None):
+    """
+
+    Args:
+        attnXy:
+        attnPs:
+        p_style_dur:
+
+    Returns:
+
+    """
+
+    if attnPs is None:
+        # x_no_spaceIndex = index_nointersperse(x, item=lensymbol) # .shape[0]: <x.shape[0]
+        # attnXy_spacerm = attn[:, x_no_spaceIndex, :]             # attn: (b, pp_l, m_l) -> (b, p_l, m_l)
+
+        attnXy_spacerm = attnXy  ## (b, p_l, mcut_l)
+        attnPs = get_diag_from_dur2(p_style_dur)  ## (b, p_l, scut_l)   # !s_l == m_l
+
+        ############CHECK1############
+        if attnXy_spacerm.shape[1] != attnPs.shape[1]:
+            # print("attnxy {}, attnps {} shape should be same!".format(attnXy_spacerm.shape, attnPs.shape))
+            attnPs = align_a2b_padcut(attnPs.transpose(1, 2), attnXy_spacerm.shape[1],
+                                      pad_value=0, pad_type="right").transpose(1, 2)
+        assert attnXy_spacerm.shape[1] == attnPs.shape[1]
+        attnYs_space_rm = torch.matmul(attnXy_spacerm.transpose(1, 2), attnPs)  # (b, m_l, s_l)
+
+        ############ CHECK23 ############
+        # from GradTTS.utils import save_plot
+        # print("attn_mask_cross -> block diag:", attn_mask_cross)
+        # print("attnXy_spacerm and attnPs should be diagnal with 1", attnXy_spacerm, attnPs)
+        # save_plot(attnXy_spacerm[0].cpu(), f'watchImg/attnXy_spacerm.png')
+        # save_plot(attnPs[0].cpu(), f'watchImg/attnPs.png')
+        # save_plot(attnYs_space_rm[0].cpu(), f'watchImg/attnYs_space_rm.png')  # (b, m_l, s_l)
+    else:
+        attnYs_space_rm = torch.matmul(attnXy.transpose(1, 2), attnPs)  # (b, m_l, s_l)
+    return attnYs_space_rm
 
 
 def cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, cut_size, y_dim=80):
@@ -356,30 +460,15 @@ def cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, cut_size, y_dim=80):
 
     return y, y_lengths, y_mask, melstyle, attn
 
-def search_ma(x, y, attn_mask, xy_dim=80):
-    """
-    search monotonic attention
-    Returns:
-
-    """
-    const = -0.5 * math.log(2 * math.pi) * xy_dim
-    factor = -0.5 * torch.ones(x.shape, dtype=x.dtype, device=x.device)
-    y_square = torch.matmul(factor.transpose(1, 2), y ** 2)
-    y_mu_double = torch.matmul(2.0 * (factor * x).transpose(1, 2), y)
-    mu_square = torch.sum(factor * (x ** 2), 1).unsqueeze(-1)
-    log_prior = y_square - y_mu_double + mu_square + const
-    attn = monotonic_align.maximum_path(log_prior, attn_mask.squeeze(1))
-    return attn
-
 
 def get_cut_range_x(attn, cut_lower, cut_upper):
     cut_lower_x = (attn[:, cut_lower] == 1).nonzero(as_tuple=False)
     cut_upper_x = (attn[:, cut_upper-1] == 1).nonzero(as_tuple=False)
     if cut_upper_x.size()[0] == 0:
         torch.set_printoptions(threshold=10_000)
-        print(attn.size(), cut_lower, cut_upper)
-        print(attn[:, cut_upper])
-        print(attn)
+        #print(attn.size(), cut_lower, cut_upper)
+        #print(attn[:, cut_upper])
+        #print(attn)
     cut_lower_x = cut_lower_x[0][0]
     cut_upper_x = cut_upper_x[0][0]
     #print("cut_lower_x, cut_upper_x:{}, {}".format(cut_lower_x, cut_upper_x))

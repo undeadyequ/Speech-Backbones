@@ -31,11 +31,11 @@ EXAMPLE_DOC_STRING = """
         >>> pipe_prior.to("cuda")
 
         >>> prompt = "red cat, 4k photo"
-        >>> img = load_image(
+        >>> watchImg = load_image(
         ...     "https://huggingface.co/datasets/hf-internal-testing/diffusers-images/resolve/main"
         ...     "/kandinsky/cat.png"
         ... )
-        >>> image_emb, nagative_image_emb = pipe_prior(prompt, image=img, strength=0.2).to_tuple()
+        >>> image_emb, nagative_image_emb = pipe_prior(prompt, image=watchImg, strength=0.2).to_tuple()
 
         >>> pipe = KandinskyPipeline.from_pretrained(
         ...     "kandinsky-community/kandinsky-2-2-decoder, torch_dtype=torch.float16"

@@ -39,18 +39,20 @@ class GuidedAttentionLoss(torch.nn.Module):
         """Calculate forward propagation.
 
         Args:
-            att_ws (Tensor): Batch of attention weights (B, T_max_out, T_max_in).
+            att_ws (Tensor): Batch of attention weights (B, [h] ,T_max_out, T_max_in) or
             ilens (LongTensor): Batch of input lenghts (B,).
             olens (LongTensor): Batch of output lenghts (B,).
 
         Returns:
             Tensor: Guided attention loss value.
-
         """
         if self.guided_attn_masks is None:
             self.guided_attn_masks = self._make_guided_attention_masks(ilens, olens, fix_len).to(att_ws.device)
+            #if len(att_ws.shape) == 4:
+            #    self.guided_attn_masks = self.guided_attn_masks.unsqueeze(1)
         if self.masks is None:
             self.masks = self._make_masks(ilens, olens).to(att_ws.device)
+        #print(self.guided_attn_masks[0, :10, :10])
         losses = self.guided_attn_masks * att_ws
         masks_pad = torch.zeros(losses.shape, dtype=torch.bool).cuda()
         b, ilen, olen = self.masks.shape

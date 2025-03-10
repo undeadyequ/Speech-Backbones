@@ -236,7 +236,7 @@ class UniDiffuserPipeline(DiffusionPipeline):
             elif prompt_latents_available:
                 mode = "text"
             elif image_latents_available:
-                mode = "img"
+                mode = "watchImg"
             else:
                 # No inputs or latents available
                 mode = "joint"
@@ -271,7 +271,7 @@ class UniDiffuserPipeline(DiffusionPipeline):
 
     def set_image_mode(self):
         r"""Manually set the generation mode to unconditional ("marginal") image generation."""
-        self.mode = "img"
+        self.mode = "watchImg"
 
     def set_text_to_image_mode(self):
         r"""Manually set the generation mode to text-conditioned image generation."""
@@ -328,7 +328,7 @@ class UniDiffuserPipeline(DiffusionPipeline):
                 # Not currently supporting something like image_embeds.
                 batch_size = image.shape[0]
             multiplier = num_prompts_per_image
-        elif mode in ["img"]:
+        elif mode in ["watchImg"]:
             if vae_latents is not None:
                 batch_size = vae_latents.shape[0]
             elif clip_latents is not None:
@@ -876,7 +876,7 @@ class UniDiffuserPipeline(DiffusionPipeline):
             )
 
             return text_out
-        elif mode == "img":
+        elif mode == "watchImg":
             # Unconditional ("marginal") image generation (no CFG)
             img_vae_latents, img_clip_latents = self._split(latents, height, width)
 
@@ -1006,7 +1006,7 @@ class UniDiffuserPipeline(DiffusionPipeline):
             clip_latents_expected_shape = (1, self.image_encoder_projection_dim)
             self.check_latents_shape("clip_latents", clip_latents, clip_latents_expected_shape)
 
-        if mode in ["text2img", "img"] and vae_latents_available and clip_latents_available:
+        if mode in ["text2img", "watchImg"] and vae_latents_available and clip_latents_available:
             if vae_latents.shape[0] != clip_latents.shape[0]:
                 raise ValueError(
                     f"Both `vae_latents` and `clip_latents` are supplied, but their batch dimensions are not equal:"
@@ -1077,7 +1077,7 @@ class UniDiffuserPipeline(DiffusionPipeline):
                 text-conditioned image generation (`text2img`) mode.
             num_images_per_prompt (`int`, *optional*, defaults to 1):
                 The number of images to generate per prompt. Used in `text2img` (text-conditioned image generation) and
-                `img` mode. If the mode is joint and both `num_images_per_prompt` and `num_prompts_per_image` are
+                `watchImg` mode. If the mode is joint and both `num_images_per_prompt` and `num_prompts_per_image` are
                 supplied, `min(num_images_per_prompt, num_prompts_per_image)` samples are generated.
             num_prompts_per_image (`int`, *optional*, defaults to 1):
                 The number of prompts to generate per image. Used in `img2text` (image-conditioned text generation) and
@@ -1277,7 +1277,7 @@ class UniDiffuserPipeline(DiffusionPipeline):
         # 6. Prepare latent variables
         if mode == "joint":
             latents = self._combine_joint(image_vae_latents, image_clip_latents, prompt_embeds)
-        elif mode in ["text2img", "img"]:
+        elif mode in ["text2img", "watchImg"]:
             latents = self._combine(image_vae_latents, image_clip_latents)
         elif mode in ["img2text", "text"]:
             latents = prompt_embeds
@@ -1336,7 +1336,7 @@ class UniDiffuserPipeline(DiffusionPipeline):
                 self.text_tokenizer.decode(output[: int(length)], skip_special_tokens=True)
                 for output, length in zip(output_list, seq_lengths)
             ]
-        elif mode in ["text2img", "img"]:
+        elif mode in ["text2img", "watchImg"]:
             image_vae_latents, image_clip_latents = self._split(latents, height, width)
             gen_image = self.decode_image_latents(image_vae_latents)
         elif mode in ["img2text", "text"]:

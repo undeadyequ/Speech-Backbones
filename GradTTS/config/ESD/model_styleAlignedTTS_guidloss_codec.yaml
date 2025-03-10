@@ -1,7 +1,16 @@
+# tts hyper
 model_version: "STDitMocha_mlp"  # "dit/STDit/STDitCross/STDitMocha  &  vae/ssl    ->  Estimator_localStyle_globalStyle
 diff_model: "STDitMocha"   # dit/STDit/STDitCross/STDitMocha
 ref_encoder: "mlp"      # vae/vaeEma/mlp
-ref_embedder: "wav2vect2"        # wav2vect2, mel
+ref_embedder: "FACodec"        # wav2vect2, mel, FACodec
+
+# diff hyper
+mu: "txt_depend"         # txt_depend or norm
+solver: "sde"            # sde or ode
+
+# input hyper
+spk_emb_dim: 64
+emo_emb_dim: 5
 
 encoder:
   n_enc_channels: 128    # origin: 192
@@ -23,17 +32,8 @@ decoder:
   stoc: False # default = True
   temperature: 1.0 # terminal variance
   n_timesteps: 50
-  melstyle_n: 768   # 768 or 3
+  melstyle_n: 256   # 768(wav2vect2) or 2(psd) or 256(FACodec)
   psd_n: 3
-
-tv_encoder:
-  c_in: 80
-  num_layer: 6
-  c_h: 128
-  c_out: 192
-  c_out_g: 192
-  commit_w: 0.25
-  n_emb: 512
 
 unet:
   unet_type: "origin"  # origin or diffuser
@@ -44,14 +44,9 @@ unet:
   p_uncond: 0.0
   guidence_strength: 3
 
-spk_emb_dim: 64
-emo_emb_dim: 5
-
-mu: "txt_depend"         # txt_depend or norm
-solver: "sde"            # sde or ode
 
 loss:
-  guided_attn: False
+  guided_attn: True
 
 dit_mocha:
   input_size: 80     # W
@@ -108,7 +103,7 @@ stditMocha:
   n_heads: 4
   kernel_size: 3
   gin_channels: 256       # Label dim
-  monotonic_approach: hard  # hard, mas, guidloss, mocha
+  monotonic_approach: guidloss  # hard, hard_phoneme, mas, guidloss, mocha
   use_lsc: True
   mochaAttn_kwargs:
     kdim: 256
@@ -131,3 +126,13 @@ vqvae:
   vq_bins: 1024
   vq_dim: 256
   activation: 'ReLU'
+
+
+tv_encoder:
+  c_in:      80
+  num_layer: 6
+  c_h:       128
+  c_out:     80   # 192
+  c_out_g:   80   # 192
+  commit_w:  0.25
+  n_emb:     512

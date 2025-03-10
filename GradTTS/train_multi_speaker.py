@@ -165,8 +165,8 @@ def train_process_cond(configs):
     if resume_epoch > 1:
         resume(ckpt, model, optimizer, 1)
 
-    # Create subdir img/model/samples
-    Path("{}/img".format(log_dir)).mkdir(exist_ok=True)
+    # Create subdir watchImg/model/samples
+    Path("{}/watchImg".format(log_dir)).mkdir(exist_ok=True)
     Path("{}/models".format(log_dir)).mkdir(exist_ok=True)
     Path("{}/samples".format(log_dir)).mkdir(exist_ok=True) # ??
 
@@ -176,7 +176,7 @@ def train_process_cond(configs):
         i = int(spk.cpu())
         logger.add_image(f'image_{i}/ground_truth', plot_tensor(mel.squeeze()),
                          global_step=0, dataformats='HWC')
-        save_plot(mel.squeeze(), f'{log_dir}/img/original_{i}.png')
+        save_plot(mel.squeeze(), f'{log_dir}/watchImg/original_{i}.png')
 
     print('Start training...')
     iteration = 0
@@ -185,6 +185,8 @@ def train_process_cond(configs):
     vocoder = get_vocoder()
 
     for epoch in range(resume_epoch + 1, n_epochs + 1):
+        """
+        
         model.eval()
         print('Synthesis...')
         with torch.no_grad():
@@ -205,7 +207,7 @@ def train_process_cond(configs):
                     melstyle = item["melstyle"].cuda()
 
                 i = int(spk.cpu())
-                y_enc, y_dec, attn = model(x,
+                y_enc, y_dec, attn, unet_attn = model(x,
                                            x_lengths,
                                            n_timesteps=n_timesteps,
                                            temperature=temperature,
@@ -230,17 +232,16 @@ def train_process_cond(configs):
                 # show image and audio (show initiate image to check earlierly)
                 if epoch % show_img_per_epoch == 0 or epoch == 1 or epoch == 2 or epoch == 3:
                     save_plot(y_enc.squeeze().cpu(),
-                              f'{log_dir}/img/generated_enc_{i}_epoch{epoch}.png')
+                              f'{log_dir}/watchImg/generated_enc_{i}_epoch{epoch}.png')
                     save_plot(y_dec.squeeze().cpu(),
-                              f'{log_dir}/img/generated_dec_{i}_epoch{epoch}.png')
+                              f'{log_dir}/watchImg/generated_dec_{i}_epoch{epoch}.png')
                     save_plot(attn.squeeze().cpu(),
-                              f'{log_dir}/img/alignment_{i}_epoch{epoch}.png')
+                              f'{log_dir}/watchImg/alignment_{i}_epoch{epoch}.png')
                     # synthesize audio
                     audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
                     ## create folder if not exist
                     write(f'{log_dir}/samples/sample_{i}_epoch{epoch}.wav', 22050, audio)
-
-
+        """
         model.train()
         dur_losses = []
         prior_losses = []
@@ -253,6 +254,7 @@ def train_process_cond(configs):
                 y, y_lengths = batch['y'].cuda(), batch['y_lengths'].cuda()
                 spk = batch['spk'].cuda()
                 #emo = batch['emo'].cuda()
+                emo = None
 
                 melstyle = batch["melstyle"].cuda()
                 melstyle_len = batch["melstyle_lengths"].cuda()  # Use it rather than x_mask

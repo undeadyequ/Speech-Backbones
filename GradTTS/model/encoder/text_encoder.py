@@ -4,8 +4,8 @@ import math
 
 import torch
 
-from model.base import BaseModule
-from model.utils import sequence_mask, convert_pad_shape
+from GradTTS.model.base import BaseModule
+from GradTTS.model.utils import sequence_mask, convert_pad_shape
 
 
 class LayerNorm(BaseModule):

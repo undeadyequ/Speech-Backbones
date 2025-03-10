@@ -134,9 +134,10 @@ def show_attn_map(
     axes[r, c].set_xticklabels(xtickslab)
     axes[r, c].set_yticklabels(ytickslab)
 
-    axes[r, c].pcolor(data, cmap=plt.cm.Blues, alpha=0.9)
+    pc = axes[r, c].pcolor(data, cmap=plt.cm.Blues, alpha=0.9)
     axes[r, c].set_xlabel(xy_label_sub[0])
     axes[r, c].set_ylabel(xy_label_sub[1])
+    fig.colorbar(pc, ax=axes[r, c])
 
     n += 1
   fig.suptitle(title)

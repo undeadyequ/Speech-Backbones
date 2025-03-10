@@ -64,12 +64,12 @@ EXAMPLE_DOC_STRING = """
         >>> pipe = pipe.to("cuda")
 
 
-        >>> img = load_image(
+        >>> watchImg = load_image(
         ...     "https://huggingface.co/datasets/hf-internal-testing/diffusers-images/resolve/main"
         ...     "/kandinsky/cat.png"
         ... ).resize((768, 768))
 
-        >>> hint = make_hint(img, depth_estimator).unsqueeze(0).half().to("cuda")
+        >>> hint = make_hint(watchImg, depth_estimator).unsqueeze(0).half().to("cuda")
 
         >>> prompt = "A robot, 4k photo"
         >>> negative_prior_prompt = "lowres, text, error, cropped, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, out of frame, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck, username, watermark, signature"

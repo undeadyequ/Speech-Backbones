@@ -204,11 +204,66 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         random.shuffle(self.filelist)
 
     def get_triplet(self, line):
+        filepath, text, speaker = line[0], line[1], line[2]
+        text = self.get_text(text, add_blank=self.add_blank)
+        mel = self.get_mel(filepath)
+        speaker = self.get_speaker(speaker)
+        return (text, mel, speaker)
+
+    def get_fourthlet(self, line):
+        """
+
+        Args:
+            line:
+
+        Returns:
+            text: (txt_len, ?)
+            mel: (mel_len, ?)
+            spk: (1,) ?
+            pit: (1, word_len)
+            eng: (1, word_len)
+            dur: (1, word_len)
+        """
         basename, speaker, phone, text = line[0], line[1], line[2], line[3]
-        text = self.get_text(text)
+        text = self.get_text(text)   # ... was forest!  ->  ... {W AA S} forest!
+        #text = self.get_phoneme(phone[1:-1])  # get phonemeID
+        #if len(text) != len(phone[1:-1].split()):  # sil can not be converted
+        #    print("phonemes:{} with len {}, p_ids len {}".format(phone[1:-1], len(phone[1:-1].split()), len(text)))
         mel = self.get_mel(basename, read_exist=True, spk=speaker)
         spk = self.get_speaker(speaker)
-        return (text, mel, spk)
+
+        # Emo_embed
+        if self.datatype == "emo_embed":
+            emo = self.get_emo(basename)
+            return (text, mel, spk, emo)
+        # PSD
+        elif self.datatype == "psd":
+            pit, eng, dur = (self.get_pit(basename, speaker),  # (1, p_l)
+                             self.get_eng(basename, speaker),
+                             self.get_dur(basename, speaker))
+            if self.need_rm_sil:
+                sil_idx = [i for i, p in enumerate(phone[1:-1].split()) if p != "sil" and p!= "spn"]
+                #print("before rm", len(pit[0]))
+                pit, eng, dur = pit[:, sil_idx], eng[:, sil_idx], dur[:, sil_idx]
+                #print("after rm", len(pit[0]))
+            if self.psd_gran == "frame":
+                if len(text) != len(pit[0]):
+                    pass
+                    #print("phoneme: {} len: {}".format(phone[1:-1], len(phone[1:-1].split())))
+                    #print("textId {} len should be equal to pit len {}:".format(len(text), len(pit[0])))
+                pit = torch.repeat_interleave(pit, repeats=dur.to(torch.long).squeeze(0), dim=1)
+                eng = torch.repeat_interleave(eng, repeats=dur.to(torch.long).squeeze(0), dim=1)
+                dur_frame = torch.arange(0, dur.shape[1]).unsqueeze(0)
+                dur_frame = torch.repeat_interleave(dur_frame, repeats=dur.to(torch.long).squeeze(0), dim=1)  # 00...111
+            return (text, mel, spk, pit, eng, dur_frame)
+        elif self.datatype == "w2v":
+            w2v = self.get_wav2vect(basename, speaker)
+            return (text, mel, spk, w2v)
+        elif self.datatype == "melstyle" or self.datatype == "melstyle_onehot" or self.datatype == "mel":
+            w2v = self.get_wav2vect(basename, speaker)
+            return (text, mel, spk, w2v)
+        else:
+            return (text, mel, spk)
 
     def get_mel(self, filepath, read_exist=True, spk=None):
         if read_exist:
@@ -272,15 +327,6 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         w2v = torch.unsqueeze(torch.from_numpy(np.load(w2v_path)), 0).transpose(1, 2)
         return w2v
 
-    def get_facodec_psd(self, basename, speaker):
-        facodec_f = os.path.join(
-            self.preprocessed_path,
-            "psd_quants",
-            "{}.npy".format(basename),
-        )
-        facodec = torch.from_numpy(np.load(facodec_f))
-        return facodec
-
     def get_text(self, text):
         text_norm = text_to_sequence(text, dictionary=self.cmudict)
         if self.add_blank:
@@ -300,58 +346,58 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         return speaker
 
     def __getitem__(self, index):
-        basename, speaker, phone, text = self.filelist[index][0:4]
-        text, mel, spk = self.get_triplet(self.filelist[index])
-        item = {'y': mel, 'x': text, 'spk': spk}
+        text, mel, speaker, emo = self.get_triplet(self.filelist[index])
+        item = {'y': mel, 'x': text, 'spk': speaker}
+        if self.datatype == "emo_embed":
+            item["emo"] = emo
 
-        if self.datatype == "emo_embed":                   # iiv emb
-            item["emo"] = self.get_emo(basename)
-        elif self.datatype == "psd":                       # psd
-            pit, eng, dur = (self.get_pit(basename, speaker),  # (1, p_l)
-                             self.get_eng(basename, speaker),
-                             self.get_dur(basename, speaker))
-            if self.need_rm_sil:
-                sil_idx = [i for i, p in enumerate(phone[1:-1].split()) if p != "sil" and p!= "spn"]
-                pit, eng, dur = pit[:, sil_idx], eng[:, sil_idx], dur[:, sil_idx]
-            if self.psd_gran == "frame":
-                pit = torch.repeat_interleave(pit, repeats=dur.to(torch.long).squeeze(0), dim=1)
-                eng = torch.repeat_interleave(eng, repeats=dur.to(torch.long).squeeze(0), dim=1)
-                dur_frame = torch.arange(0, dur.shape[1]).unsqueeze(0)
-                dur_frame = torch.repeat_interleave(dur_frame, repeats=dur.to(torch.long).squeeze(0), dim=1)  # 00...111
+
+        if self.datatype == "emo_embed":
+            text, mel, speaker, emo = self.get_fourthlet(self.filelist[index])
+            item = {'y': mel, 'x': text, 'spk': speaker, "emo": emo}
+        elif self.datatype == "psd":
+            text, mel, speaker, pit, eng, dur = self.get_fourthlet(self.filelist[index])
             emolabel = self.metajson[self.filelist[index][0]]["emotion"]
             emolabel = torch.tensor([emo_num[emolabel]], dtype=torch.long)
-            melstyle = torch.stack([pit, eng, dur_frame], dim=1)
-            item["dur"] = dur
-            item["melstyle"] = melstyle
-            item["emo_label"] = emolabel
-
-        elif self.datatype == "melstyle":                   # wav2vect2
-            melstyle = self.get_wav2vect(basename, speaker)
-            emolabel = self.metajson[self.filelist[index][0]]["emotion"]
-            emolabel = torch.tensor([emo_num[emolabel]], dtype=torch.long)
-            item["melstyle"] = melstyle
-            item["emo_label"] = emolabel
-
-        elif self.datatype == "melstyle_onehot":            # wav2vect2 + emo_onehot
-            melstyle = self.get_wav2vect(basename, speaker)
+            melstyle = torch.stack([pit, eng, dur], dim=1)
+            item = {'y': mel,
+                    'x': text,
+                    'spk': speaker,
+                    "melstyle": melstyle,  # (b, 2, mel_l)
+                    "dur": dur,
+                    "emo_label": emolabel
+                    }
+        elif self.datatype == "melstyle_onehot":
+            text, mel, speaker, melstyle = self.get_fourthlet(self.filelist[index])
             emolabel = self.metajson[self.filelist[index][0]]["emotion"]
             emolabel = torch.nn.functional.one_hot(torch.tensor([emo_num[emolabel]]), num_classes=5)
             emolabel = torch.unsqueeze(emolabel, 0)
-            item["melstyle"] = melstyle
-            item["emo_label"] = emolabel
-
-        elif self.datatype == "mel":                        # mel
+            item = {'y': mel,
+                    'x': text,
+                    'spk': speaker,
+                    "melstyle": melstyle,
+                    "emo_label": emolabel
+                    }
+        elif self.datatype == "melstyle":
+            text, mel, speaker, melstyle = self.get_fourthlet(self.filelist[index])
             emolabel = self.metajson[self.filelist[index][0]]["emotion"]
             emolabel = torch.tensor([emo_num[emolabel]], dtype=torch.long)
-            item["melstyle"] = mel.unsqueeze(0)
-            item["emo_label"] = emolabel
-
-        elif self.datatype == "FACodec":                        # FACodec
-            melstyle = self.get_facodec_psd(basename, speaker)
+            item = {'y': mel,
+                    'x': text,
+                    'spk': speaker,
+                    "melstyle": melstyle,  # (b, d, mel_l)
+                    "emo_label": emolabel
+                    }
+        elif self.datatype == "mel":
+            text, mel, speaker, melstyle = self.get_fourthlet(self.filelist[index])
             emolabel = self.metajson[self.filelist[index][0]]["emotion"]
             emolabel = torch.tensor([emo_num[emolabel]], dtype=torch.long)
-            item["melstyle"] = melstyle   # 0 : (1, 256, L)
-            item["emo_label"] = emolabel
+            item = {'y': mel,
+                    'x': text,
+                    'spk': speaker,
+                    "melstyle": mel.unsqueeze(0),  # (b, d, mel_l)
+                    "emo_label": emolabel
+                    }
         else:
             item = {}
             print("Not implemented!")

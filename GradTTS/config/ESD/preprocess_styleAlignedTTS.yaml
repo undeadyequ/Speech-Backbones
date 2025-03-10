@@ -1,5 +1,7 @@
 dataset: "ESD"   # libri-tts or ljspeech, ESD
-datatype: "melstyle"  # psd, emo_embed, other, melstyle, melstyle_onehot (for one hot)
+datatype: "mel"  # psd, emo_embed, other, melstyle, melstyle_onehot (for one hot), mel, codec  <- instead by ref_embedder (model.yaml) in future ->
+psd_gran: "frame"  # frame, phoneme
+need_rm_sil: True
 
 computer_path1: "rosen/Project"
 computer_path2: "acc12642fx/project"
@@ -26,8 +28,8 @@ path:
   pitch: "pitch"
   energy: "energy"
   duration: "duration"
-  index_train_f: "train.txt"
-  index_val_f: "val.txt"
+  index_train_f: "train.txt"    # "train.txt", "train_selected.txt"
+  index_val_f: "val_selected.txt"  # "val.txt"
 
   # other
   cmudict_path: 'resources/cmu_dictionary'

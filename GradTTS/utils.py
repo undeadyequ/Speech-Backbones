@@ -21,6 +21,8 @@ def intersperse(lst, item):
     result[1::2] = lst
     return result
 
+def index_nointersperse(lst: torch.Tensor, item):
+    return (lst != item).nonzero()[0]
 
 def parse_filelist(filelist_path, split_char="|"):
     with open(filelist_path, encoding='utf-8') as f:
@@ -79,9 +81,18 @@ def save_plot(tensor, savepath, size=(12, 3)):
 ##### For inference
 def get_emo_label(emo: str,
                   emo_num_dict: dict=emo_num_dict,
-                  emo_value=1):
+                  emo_type="index",
+                  emo_value=1,
+                  emo_num=5
+                  ):
+    emo_tensor = torch.tensor([emo_num_dict[emo]], dtype=torch.long).cuda()
+    if emo_type == "onehot":
+        emo_tensor = torch.nn.functional.one_hot(emo_tensor, num_classes=emo_num).cuda()
+    """
     emo_emb_dim = len(emo_num_dict.keys())
     emo_label = [[0] * emo_emb_dim]
     emo_label[0][emo_num_dict[emo]] = emo_value
-    return emo_label
+    """
+
+    return emo_tensor
 

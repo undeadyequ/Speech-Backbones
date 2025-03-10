@@ -1,8 +1,4 @@
 model_version: "STDitMocha_mlp"  # "dit/STDit/STDitCross/STDitMocha  &  vae/ssl    ->  Estimator_localStyle_globalStyle
-diff_model: "STDitMocha"   # dit/STDit/STDitCross/STDitMocha
-ref_encoder: "mlp"      # vae/vaeEma/mlp
-ref_embedder: "wav2vect2"        # wav2vect2, mel
-
 encoder:
   n_enc_channels: 128    # origin: 192
   filter_channels: 128   # origin: 768
@@ -23,17 +19,8 @@ decoder:
   stoc: False # default = True
   temperature: 1.0 # terminal variance
   n_timesteps: 50
-  melstyle_n: 768   # 768 or 3
+  melstyle_n: 2   # 768 or 3
   psd_n: 3
-
-tv_encoder:
-  c_in: 80
-  num_layer: 6
-  c_h: 128
-  c_out: 192
-  c_out_g: 192
-  commit_w: 0.25
-  n_emb: 512
 
 unet:
   unet_type: "origin"  # origin or diffuser

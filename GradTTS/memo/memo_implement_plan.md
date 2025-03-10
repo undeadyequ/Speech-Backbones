@@ -15,7 +15,7 @@
 - Concatenation of input
   - t, x:  embed sepeartedly and concate.
   - spk, hidden, mu, xt: Directly concate to x
-![unet_arch](../img/unet_arch.png)
+![unet_arch](../watchImg/unet_arch.png)
 
 
 ## evaluation

@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from modules.convnet import ConvNetDouble
-from modules.tokenizer import (
+from GradTTS.modules.convnet import ConvNetDouble
+from GradTTS.modules.tokenizer import (
     HIFIGAN_MEL_CHANNELS
 )
-from modules.quantization import ResidualVectorQuantizer
+from GradTTS.modules.quantization import ResidualVectorQuantizer
 
 from einops import rearrange
 

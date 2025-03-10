@@ -195,6 +195,10 @@ class MoChA(nn.Module):
                 p_choose (FloatTensor): `[B, H_ma, qlen, klen]`
 
         """
+
+        # t: (b, hid_dim), x: (b, hid_dim, cut_l), mask: (b, ), c: (b, hid_dim), r: (b, mel_dim, cut_l)
+
+
         klen = key.size(1)
         bs, qlen = query.size()[:2]
         tail_len = self.key_tail.size(1) if self.key_tail is not None else 0

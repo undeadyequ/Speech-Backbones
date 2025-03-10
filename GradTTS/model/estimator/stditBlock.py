@@ -6,7 +6,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from scipy.constants import troy_ounce
 
+from GradTTS.model.estimator.stditBlockAttention import MultiHeadAttention, MultiHeadAttentionCross
+from GradTTS.model.mocha import MoChA
+from GradTTS.eval_util import get_quantile
+from GradTTS.model.utils import generate_diagal_fromMask
+from GradTTS.model.utils import search_ma
+
+
+#torch.set_printoptions(threshold=10_000)
+torch.set_printoptions(threshold=100000)
 
 class FFN(nn.Module):
     def __init__(self, in_channels, out_channels, filter_channels, kernel_size, p_dropout=0., gin_channels=0):
@@ -31,16 +41,148 @@ class FFN(nn.Module):
         return x * x_mask
 
 
+selected_channel = list(torch.randint(0, 256, (10,)))
+
+class DiTConVMochaBlock(nn.Module):
+    """
+    A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
+    """
+    def __init__(self, hidden_channels, filter_channels, num_heads, kernel_size=3, p_dropout=0.1, gin_channels=0,
+                 monotonic_approach="no", **mochaAttn_kwargs):
+        super().__init__()
+        self.monotonic_approach = monotonic_approach
+
+        # self
+        self.norm1 = nn.LayerNorm(hidden_channels, elementwise_affine=False)
+        self.attn = MultiHeadAttention(hidden_channels, hidden_channels, num_heads, p_dropout)
+        self.norm2 = nn.LayerNorm(hidden_channels, elementwise_affine=False)
+
+        # mocha
+        self.norm3 = nn.LayerNorm(hidden_channels, elementwise_affine=False)
+
+        if self.monotonic_approach == "mocha":
+            self.attn2 = MoChA(**mochaAttn_kwargs)
+        else:
+            self.attn2 = MultiHeadAttentionCross(hidden_channels, hidden_channels, num_heads, p_dropout)
+        self.rnorm = nn.LayerNorm(hidden_channels, elementwise_affine=False)
+
+        # FFN
+        self.mlp = FFN(hidden_channels, hidden_channels, filter_channels, kernel_size, p_dropout=p_dropout)
+        self.adaLN_modulation = nn.Sequential(
+            nn.Linear(gin_channels, hidden_channels) if gin_channels != hidden_channels else nn.Identity(),
+            nn.SiLU(),
+            nn.Linear(hidden_channels, 7 * hidden_channels, bias=True)
+        )
+
+    def forward(self, x, c, r=None, x_mask=None, muy_dur=None, ref_dur=None, attnCross=None):
+        """
+        Args:
+            x : [batch_size, channel, time]
+            c : [batch_size, channel]
+            r: [batch_size, channel, time]
+            x_mask : [batch_size, 1, time]
+        return the same shape as x
+        """
+
+        # self
+        x = x * x_mask
+        attn_mask_self = x_mask.unsqueeze(1) * x_mask.unsqueeze(-1)  # shape: [batch_size, 1, time, time]
+        attn_mask_self = torch.zeros_like(attn_mask_self).masked_fill(attn_mask_self == 0, -torch.finfo(x.dtype).max)
+
+        ttt = self.adaLN_modulation(c).unsqueeze(2).chunk(7, dim=1)
+        shift_msa, scale_msa, gate_msa, gate_mocha, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).unsqueeze(2).chunk(7, dim=1)  # shape: [batch_size, channel, 1]
+        x_norm = self.norm1(x.transpose(1, 2)).transpose(1, 2)
+        x_self = self.attn(self.modulate(x_norm, shift_msa, scale_msa),
+                                     attn_mask_self) * x_mask
+        x = x + gate_msa * x_self
+
+        # quantile
+        #print("x_input:", get_quantile(x[:, selected_channel, :], dim=2))
+        #print("x_self:", get_quantile(x_self[:, selected_channel, :], dim=2))
+
+        # mean
+        #print("x_norm:", torch.mean(x_norm[:, selected_channel, :], dim=2))
+        #print("x_input:", torch.mean(x[:, selected_channel, :], dim=2))
+        #print("x_self:", torch.mean(x_self[:, selected_channel, :], dim=2))
+
+        #print("scale_msa: ", scale_msa[:, selected_channel, :])
+        #print("gate_msa: ", gate_msa[:, selected_channel, :])
+        #print("shift_msa: ", shift_msa[:, selected_channel, :])
+
+        # mocha
+        if self.monotonic_approach == "mocha":
+            mode = "parallel" if self.training else "hard"
+            # r: (b, hid_dim, cut_l), x: (b, hid_dim, cut_l), x_mask: (b, 1, cut_l)
+            x_mask_dupli = x_mask.repeat(1, r.shape[2], 1).transpose(1, 2)  # (qlen, klen)   -> do not mask reference speech
+            r = self.rnorm(r.transpose(1, 2)).transpose(1, 2)  # (b, hid_dim, cut_l)
+            #print("r:", get_quantile(r.transpose(1, 2)[:, selected_channel, :], dim=2))
+            #print("r:", torch.mean(r[:, selected_channel, :], dim=2))
+            mocha_res = self.attn2(key=r.transpose(1, 2), value=r.transpose(1, 2),
+                                   query=self.norm3(x.transpose(1, 2)), mask=x_mask_dupli, mode=mode)
+            x_cross, alfpha, stats = mocha_res  # x_out: (b, cut_l, hid_dim)
+            x_cross = x_cross.transpose(1, 2)
+            # print("x_cross:", get_quantile(x_out.transpose(1, 2)[:, selected_channel, :], dim=2))
+            # print("x_cross:", torch.mean(x_out[:, selected_channel, :], dim=2))
+            # print("gate_mocha: ", gate_mocha[:, selected_channel, :])
+            attn_mask_cross = None
+
+        elif self.monotonic_approach == "hard_phoneme":
+            #attn_mask_cross = x_mask.repeat(1, 1, r.shape[2]).transpose(1, 2)         # (b, tq, ts) <- ts is not masked
+            #print("before diag:", attn_mask_cross)
+            #attn_mask_cross = generate_diagal_fromMask(attn_mask_cross)
+            attn_mask_cross = attnCross
+
+        elif self.monotonic_approach == "mas":
+            """
+            attn_mask_cross = search_ma(x, r, x_mask)  # (b, tq, ts)
+            """
+            attn_mask_cross = attnCross
+            print(attn_mask_cross[0, :10, :10])
+        else:
+            attn_mask_cross = x_mask.repeat(1, r.shape[2], 1).transpose(1, 2)
+
+        if attn_mask_cross is not None:
+            attn_mask_cross = torch.zeros_like(attn_mask_cross).masked_fill(attn_mask_cross == 0,
+                                                                          -torch.finfo(x.dtype).max)  # 0(needtomask) -> infi, 1 -> 0
+        r = self.rnorm(r.transpose(1, 2)).transpose(1, 2)  # (b, hid_dim, cut_l)
+        x_cross, attn_map = self.attn2(x=x, c=r, attn_mask=attn_mask_cross)   # attn_map: (b)
+        ############## CHECK01 ############
+        #if not self.training:
+        #    from GradTTS.utils import save_plot
+        #    #print("attn_mask_cross -> block diag:", attn_mask_cross)
+        #    save_plot(attn_mask_cross[0].cpu(), f'watchImg/attn_mask_cross.png')
+        #    save_plot(attn_map[0][0].detach().cpu(), f'watchImg/attn_map.png')
+
+
+        #print("attn_map", attn_map)
+        x = x + gate_mocha * x_cross * x_mask  # b, hid_dim, cut_l
+
+        # FFN
+        x = x + gate_mlp * self.mlp(self.modulate(self.norm2(x.transpose(1, 2)).transpose(1, 2), shift_mlp, scale_mlp),
+                                    x_mask)
+        #print("x_out:", torch.mean(x[:, selected_channel, :], dim=2))
+        # no condition version
+        # x = x + self.attn(self.norm1(x.transpose(1,2)).transpose(1,2),  attn_mask)
+        # x = x + self.mlp(self.norm2(x.transpose(1,2)).transpose(1,2), x_mask)
+        #return x, stats["beta"]
+        return x, attn_map    # only first head
+
+    @staticmethod
+    def modulate(x, shift, scale):
+        return x * (1 + scale) + shift
+
+
 class DiTConVBlock(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
     """
-
-    def __init__(self, hidden_channels, filter_channels, num_heads, kernel_size=3, p_dropout=0.1, gin_channels=0):
+    def __init__(self, hidden_channels, filter_channels, num_heads, kernel_size=3, p_dropout=0.1, gin_channels=0,
+                 bAttn_type="base", **mochaAttn_kwargs):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_channels, elementwise_affine=False)
         self.attn = MultiHeadAttention(hidden_channels, hidden_channels, num_heads, p_dropout)
         self.norm2 = nn.LayerNorm(hidden_channels, elementwise_affine=False)
+
         self.mlp = FFN(hidden_channels, hidden_channels, filter_channels, kernel_size, p_dropout=p_dropout)
         self.adaLN_modulation = nn.Sequential(
             nn.Linear(gin_channels, hidden_channels) if gin_channels != hidden_channels else nn.Identity(),
@@ -48,11 +190,12 @@ class DiTConVBlock(nn.Module):
             nn.Linear(hidden_channels, 6 * hidden_channels, bias=True)
         )
 
-    def forward(self, x, c, x_mask):
+    def forward(self, x, c, x_mask=None):
         """
         Args:
             x : [batch_size, channel, time]
             c : [batch_size, channel]
+            r: [batch_size, channel, time]
             x_mask : [batch_size, 1, time]
         return the same shape as x
         """
@@ -66,7 +209,6 @@ class DiTConVBlock(nn.Module):
                                      attn_mask) * x_mask
         x = x + gate_mlp * self.mlp(self.modulate(self.norm2(x.transpose(1, 2)).transpose(1, 2), shift_mlp, scale_mlp),
                                     x_mask)
-
         # no condition version
         # x = x + self.attn(self.norm1(x.transpose(1,2)).transpose(1,2),  attn_mask)
         # x = x + self.mlp(self.norm2(x.transpose(1,2)).transpose(1,2), x_mask)
@@ -75,85 +217,6 @@ class DiTConVBlock(nn.Module):
     @staticmethod
     def modulate(x, shift, scale):
         return x * (1 + scale) + shift
-
-
-class RotaryPositionalEmbeddings(nn.Module):
-    """
-    ## RoPE module
-
-    Rotary encoding transforms pairs of features by rotating in the 2D plane.
-    That is, it organizes the $d$ features as $\frac{d}{2}$ pairs.
-    Each pair can be considered a coordinate in a 2D plane, and the encoding will rotate it
-    by an angle depending on the position of the token.
-    """
-
-    def __init__(self, d: int, base: int = 10_000):
-        r"""
-        * `d` is the number of features $d$
-        * `base` is the constant used for calculating $\Theta$
-        """
-        super().__init__()
-
-        self.base = base
-        self.d = int(d)
-        self.cos_cached = None
-        self.sin_cached = None
-
-    def _build_cache(self, x: torch.Tensor):
-        r"""
-        Cache $\cos$ and $\sin$ values
-        """
-        # Return if cache is already built
-        if self.cos_cached is not None and x.shape[0] <= self.cos_cached.shape[0]:
-            return
-
-        # Get sequence length
-        seq_len = x.shape[0]
-
-        # $\Theta = {\theta_i = 10000^{-\frac{2(i-1)}{d}}, i \in [1, 2, ..., \frac{d}{2}]}$
-        theta = 1.0 / (self.base ** (torch.arange(0, self.d, 2).float() / self.d)).to(x.device)
-
-        # Create position indexes `[0, 1, ..., seq_len - 1]`
-        seq_idx = torch.arange(seq_len, device=x.device).float().to(x.device)
-
-        # Calculate the product of position index and $\theta_i$
-        idx_theta = torch.einsum("n,d->nd", seq_idx, theta)
-
-        # Concatenate so that for row $m$ we have
-        # $[m \theta_0, m \theta_1, ..., m \theta_{\frac{d}{2}}, m \theta_0, m \theta_1, ..., m \theta_{\frac{d}{2}}]$
-        idx_theta2 = torch.cat([idx_theta, idx_theta], dim=1)
-
-        # Cache them
-        self.cos_cached = idx_theta2.cos()[:, None, None, :]
-        self.sin_cached = idx_theta2.sin()[:, None, None, :]
-
-    def _neg_half(self, x: torch.Tensor):
-        # $\frac{d}{2}$
-        d_2 = self.d // 2
-
-        # Calculate $[-x^{(\frac{d}{2} + 1)}, -x^{(\frac{d}{2} + 2)}, ..., -x^{(d)}, x^{(1)}, x^{(2)}, ..., x^{(\frac{d}{2})}]$
-        return torch.cat([-x[:, :, :, d_2:], x[:, :, :, :d_2]], dim=-1)
-
-    def forward(self, x: torch.Tensor):
-        """
-        * `x` is the Tensor at the head of a key or a query with shape `[seq_len, batch_size, n_heads, d]`
-        """
-        # Cache $\cos$ and $\sin$ values
-        x = x.permute(2, 0, 1, 3)  # b h t d -> t b h d
-
-        self._build_cache(x)
-
-        # Split the features, we can choose to apply rotary embeddings only to a partial set of features.
-        x_rope, x_pass = x[..., : self.d], x[..., self.d:]
-
-        # Calculate
-        # $[-x^{(\frac{d}{2} + 1)}, -x^{(\frac{d}{2} + 2)}, ..., -x^{(d)}, x^{(1)}, x^{(2)}, ..., x^{(\frac{d}{2})}]$
-        neg_half_x = self._neg_half(x_rope)
-
-        x_rope = (x_rope * self.cos_cached[: x.shape[0]]) + (neg_half_x * self.sin_cached[: x.shape[0]])
-
-        return torch.cat((x_rope, x_pass), dim=-1).permute(1, 2, 0, 3)  # t b h d -> b h t d
-
 
 class Transpose(nn.Identity):
     """(N, T, D) -> (N, D, T)"""

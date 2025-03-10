@@ -1,12 +1,12 @@
 # if run under test folder
 import sys
-#sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
-sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones')
-sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS')
+sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
+#sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones')
+#sys.path.append('/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS')
 
 import torch
 import yaml
-from GradTTS.model.cond_tts_dit import CondGradTTS
+from GradTTS.model.cond_tts_dit import CondGradTTSDIT
 from GradTTS.model.cond_diffusion import CondDiffusion
 from GradTTS.text.symbols import symbols
 
@@ -19,12 +19,12 @@ torch.Tensor.__repr__ = custom_repr
 
 
 def test_styleAlignedTTS():
-    #config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
-    config_dir = "/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS/config/ESD"
+    config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
+    #config_dir = "/Users/luoxuan/Project/tts/Speech-Backbones/GradTTS/config/ESD"
 
     train_config = config_dir + "/train_gradTTS.yaml"
     preprocess_config = config_dir + "/preprocess_gradTTS.yaml"
-    model_config = config_dir + "/model_styleAlignedTTS_vq_ditMocha.yaml"
+    model_config = config_dir + "/model_styleAlignedTTS.yaml"
 
     preprocess_config = yaml.load(
         open(preprocess_config, "r"), Loader=yaml.FullLoader
@@ -78,9 +78,10 @@ def test_styleAlignedTTS():
     temperature = 1.0
     stoc = True
     length_scale = 1.0
+
     text_max_len = 35
     psd_max_len = 31
-    mel_max_len = 5
+    mel_max_len = 40
     
     speaker_n = 10
     style_emb_dim = 768
@@ -107,7 +108,7 @@ def test_styleAlignedTTS():
     TEST_COMPUTE_LOSS = True
 
     # test condition
-    model = CondGradTTS(nsymbols,
+    model = CondGradTTSDIT(nsymbols,
                         n_spks,
                         spk_emb_dim,
                         emo_emb_dim,
@@ -150,6 +151,9 @@ def test_styleAlignedTTS():
             "melstyle": torch.randn(batch, mel_emb_dim, mel_max_len), # vae
             "emo_label": torch.randint(0, emo_emb_dim, (batch, ))
         }
+
+        [print(k, v.shape) for k, v in inputs_value.items() if torch.is_tensor(v)]
+
         output = model(**inputs_value)
 
         # encoder_outputs, decoder_outputs, attn
@@ -171,6 +175,9 @@ def test_styleAlignedTTS():
             "melstyle": torch.randn(batch, mel_emb_dim, mel_max_len), # vae
             "emo_label": torch.randint(0, emo_emb_dim, (batch, ))
         }
+
+        [print(k, v.shape) for k, v in inputs_value_train.items() if torch.is_tensor(v)]
+
         for i in range(15):
             dur_loss, prior_loss, diff_loss, monAttn_loss, commit_loss, vq_loss = model.compute_loss(**inputs_value_train)
             print("dur_loss:", dur_loss,

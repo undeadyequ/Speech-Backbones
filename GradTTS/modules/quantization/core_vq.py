@@ -39,7 +39,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from util import util_distrib
+from GradTTS.util import util_distrib
 
 
 def default(val: tp.Any, d: tp.Any) -> tp.Any:

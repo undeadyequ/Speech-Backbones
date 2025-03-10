@@ -2,7 +2,7 @@
 logs_dir_par = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/"
 #logs_dir = logs_dir_par + "gradtts_crossSelf_v2/"
 #logs_dir = logs_dir_par + "interpEmoTTS_frame2frameAttn_noJoint/"
-logs_dir = logs_dir_par + "interpEmoTTS_frame2binAttn_noJoint/"
+logs_dir = logs_dir_par + "styleEnhancedTTS_stditMocha_norm_hardMonMask/" #"interpEmoTTS_frame2binAttn_noJoint/"
 
 config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
 
@@ -71,7 +71,7 @@ emo_melstyle_list_dict2 = {
     "Happy": "0019_000753.npy"
 }
 
-emo_melstyle_spk_dict = {
+emo_melstyleSpk_dict = {
     "Angry": ("0019_000403.npy", 19),
     "Surprise": ("0019_001453.npy", 19),
     "Sad": ("0019_001103.npy", 19),

@@ -33,6 +33,23 @@ def text_to_arpabet(text, cleaner_names=["english_cleaners"], dictionary=None):
     else:
         return None
 
+
+def phoneme_to_sequence(phonemes):
+    """Converts phonemes to a sequence of IDs corresponding to the symbols in the text.
+
+    Args:
+        phoneme: HH ER0 K AY1 N D AH0 N D F ER1 M G L AE1 N S
+
+    Returns:
+
+    """
+    p_ids = []
+    phonemes_l = phonemes.split()
+    for p in phonemes_l:
+        p_ids += _arpabet_to_sequence(p)
+    return p_ids
+
+
 def text_to_sequence(text, cleaner_names=["english_cleaners"], dictionary=None):
     '''Converts a string of text to a sequence of IDs corresponding to the symbols in the text.
 
@@ -56,6 +73,7 @@ def text_to_sequence(text, cleaner_names=["english_cleaners"], dictionary=None):
             clean_text = _clean_text(text, cleaner_names)
             if dictionary is not None:
                 clean_text = [get_arpabet(w, dictionary) for w in clean_text.split(" ")]  # ?? forest! ??
+                #print("phomeme: {}".format(clean_text))
                 for i in range(len(clean_text)):
                     t = clean_text[i]
                     if t.startswith("{"):
