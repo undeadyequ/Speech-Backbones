@@ -35,7 +35,7 @@ NUMBA_INSTALLATION_MESSAGE = (
     "followed by `export NUMBAPRO_LIBDEVICE='/usr/local/cuda/nvvm/libdevice/'` and \n"
     "`export NUMBAPRO_NVVM='/usr/local/cuda/nvvm/lib64/libnvvm.so'`.\n"
     "It is advised to always install numba using conda only, "
-    "as pip installations might interfere with other libraries such as llvmlite.\n"
+    "as pip installations might interfere with bk libraries such as llvmlite.\n"
     "If pip install does not work, you can also try adding `--ignore-installed` to the pip command,\n"
     "but this is not advised."
 )

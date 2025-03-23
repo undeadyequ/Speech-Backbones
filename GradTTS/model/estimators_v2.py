@@ -304,7 +304,7 @@ class GradLogPEstimator2dCond(BaseModule):
                                                mask_value=temp_mask_value)  # -> (b, c_out_i, d, l)
                 x = x_left + x_right
             else:
-                # only apply reference audio2 in other layers
+                # only apply reference audio2 in bk layers
                 temp_mask_left, temp_mask_right = None, None
                 x, attn_map = attn(x, key=hids2, value=hids2)  # -> (b, c_out_i, d, l)
             hiddens.append(x)

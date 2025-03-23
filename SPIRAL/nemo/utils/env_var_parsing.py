@@ -78,9 +78,9 @@ class RequiredSettingMissingError(Exception):
 
 def _get_env(key, default=None, coerce=lambda x: x, required=False):
     """
-    Return env var coerced into a type other than string.
+    Return env var coerced into a type bk than string.
     This function extends the standard os.getenv function to enable
-    the coercion of values into data types other than string (all env
+    the coercion of values into data types bk than string (all env
     vars are strings by default).
     Args:
         key: string, the name of the env var to look up
@@ -142,7 +142,7 @@ def _date(value):
 def get_env(key, *default, **kwargs):
     """
     Return env var.
-    This is the parent function of all other get_foo functions,
+    This is the parent function of all bk get_foo functions,
     and is responsible for unpacking args/kwargs into the values
     that _get_env expects (it is the root function that actually
     interacts with environ).

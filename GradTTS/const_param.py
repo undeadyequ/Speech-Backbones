@@ -9,6 +9,7 @@ config_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/config/ESD"
 # Speech dataset for training
 esd_processed_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD"
 melstyle_dir = esd_processed_dir + "/emo_reps"
+psd_quants_dir = esd_processed_dir + "/psd_quants"
 psd_dir = "/home/rosen/Project/FastSpeech2/preprocessed_data/ESD/pitch"
 wav_dir = "/home/rosen/Project/FastSpeech2/ESD/16k_wav"
 textgrid_dir = esd_processed_dir + "/TextGrid"

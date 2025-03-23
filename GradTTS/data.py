@@ -352,6 +352,17 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
             emolabel = torch.tensor([emo_num[emolabel]], dtype=torch.long)
             item["melstyle"] = melstyle   # 0 : (1, 256, L)
             item["emo_label"] = emolabel
+        elif self.datatype == "FACodecDur":
+            melstyle = self.get_facodec_psd(basename, speaker)
+            emolabel = self.metajson[self.filelist[index][0]]["emotion"]
+            emolabel = torch.tensor([emo_num[emolabel]], dtype=torch.long)
+            dur = self.get_dur(basename, speaker)
+            item["melstyle"] = melstyle   # 0 : (1, 256, L)
+            item["emo_label"] = emolabel
+            if self.need_rm_sil:
+                sil_idx = [i for i, p in enumerate(phone[1:-1].split()) if p != "sil" and p!= "spn"]
+                dur = dur[:, sil_idx]
+            item["dur"] = dur
         else:
             item = {}
             print("Not implemented!")

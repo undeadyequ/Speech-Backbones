@@ -163,7 +163,7 @@ class UnCLIPScheduler(SchedulerMixin, ConfigMixin):
         """
         Sets the discrete timesteps used for the diffusion chain. Supporting function to be run before inference.
 
-        Note that this scheduler uses a slightly different step ratio than the other diffusers schedulers. The
+        Note that this scheduler uses a slightly different step ratio than the bk diffusers schedulers. The
         different step ratio is to mimic the original karlo implementation and does not affect the quality or accuracy
         of the results.
 

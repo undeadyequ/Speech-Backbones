@@ -1,5 +1,5 @@
 dataset: "ESD"   # libri-tts or ljspeech, ESD
-datatype: "melstyle"  # psd, emo_embed, other, melstyle
+datatype: "melstyle"  # psd, emo_embed, bk, melstyle
 
 path:
   # Original embedding
@@ -21,7 +21,7 @@ path:
   index_train_f: "train.txt"
   index_val_f: "val.txt"
 
-  # other
+  # bk
   cmudict_path: 'resources/cmu_dictionary'
 
 feature:

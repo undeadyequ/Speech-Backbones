@@ -185,7 +185,6 @@ class CondDiffusion(BaseModule):
         cross_attns = torch.stack(cross_attns_list, dim=0)
         return xt, self_attns_list, cross_attns
 
-
     def compute_loss(self,
                      x0,
                      mask,

@@ -116,7 +116,7 @@ class AudioDiffusionPipeline(DiffusionPipeline):
                 None
             eta (`float`):
                 Corresponds to parameter eta (η) from the [DDIM](https://arxiv.org/abs/2010.02502) paper. Only applies
-                to the [`~schedulers.DDIMScheduler`], and is ignored in other schedulers.
+                to the [`~schedulers.DDIMScheduler`], and is ignored in bk schedulers.
             noise (`torch.Tensor`):
                 A noise tensor of shape `(batch_size, 1, height, width)` or `None`.
             encoding (`torch.Tensor`):
@@ -156,7 +156,7 @@ class AudioDiffusionPipeline(DiffusionPipeline):
         display(Audio(output.audios[0], rate=pipe.mel.get_sample_rate()))
         ```
 
-        For other tasks like variation, inpainting, outpainting, etc:
+        For bk tasks like variation, inpainting, outpainting, etc:
 
         ```py
         output = pipe(

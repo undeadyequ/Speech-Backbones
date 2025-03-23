@@ -157,7 +157,7 @@ EXAMPLE_INVERT_DOC_STRING = """
         >>> source_embeds = pipeline.get_embeds(source_prompts)
         >>> target_embeds = pipeline.get_embeds(target_prompts)
         >>> # the latents can then be used to edit a real image
-        >>> # when using Stable Diffusion 2 or other models that use v-prediction
+        >>> # when using Stable Diffusion 2 or bk models that use v-prediction
         >>> # set `cross_attention_guidance_amount` to 0.01 or less to avoid input latent gradient explosion
 
         >>> image = pipeline(
@@ -610,7 +610,7 @@ class StableDiffusionPix2PixZeroPipeline(DiffusionPipeline):
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_extra_step_kwargs
     def prepare_extra_step_kwargs(self, generator, eta):
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
-        # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
+        # eta (η) is only used with the DDIMScheduler, it will be ignored for bk schedulers.
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
 
@@ -950,7 +950,7 @@ class StableDiffusionPix2PixZeroPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
 
-        # 5. Generate the inverted noise from the input image or any other image
+        # 5. Generate the inverted noise from the input image or any bk image
         # generated from the input prompt.
         num_channels_latents = self.unet.config.in_channels
         latents = self.prepare_latents(

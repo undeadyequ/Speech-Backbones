@@ -101,7 +101,7 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
             and `epsilon_theta(x_t^c, c)` which can influence convergence for a large guidance scale. Corrector is
             usually disabled during the first few steps.
         solver_p (`SchedulerMixin`, default `None`):
-            Any other scheduler that if specified, the algorithm becomes `solver_p + UniC`.
+            Any bk scheduler that if specified, the algorithm becomes `solver_p + UniC`.
         use_karras_sigmas (`bool`, *optional*, defaults to `False`):
             Whether to use Karras sigmas for step sizes in the noise schedule during the sampling process. If `True`,
             the sigmas are determined according to a sequence of noise levels {σi}.

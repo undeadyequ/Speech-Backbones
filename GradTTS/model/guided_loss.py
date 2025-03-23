@@ -1,3 +1,4 @@
+import time
 
 import numpy as np
 import torch
@@ -35,7 +36,21 @@ class GuidedAttentionLoss(torch.nn.Module):
         self.guided_attn_masks = None
         self.masks = None
 
-    def forward(self, att_ws, ilens, olens, fix_len=None):
+    def create_guide_mask(self, ilens, olens, fix_len=None, chunksize=5):
+        guided_attn_masks = self._make_guided_attention_masks(ilens, olens, fix_len, chunksize).cuda()
+        masks = self._make_masks(ilens, olens).cuda()
+        return guided_attn_masks, masks
+
+    def compute_mLoss(self, att_ws, guided_attn_masks, masks):
+        losses = guided_attn_masks * att_ws
+        masks_pad = torch.zeros(losses.shape, dtype=torch.bool).cuda()
+        b, ilen, olen = masks.shape
+        masks_pad[:, :, :, :ilen, :olen] = masks
+        loss = torch.mean(losses.masked_select(masks_pad))
+        return loss
+
+
+    def forward(self, att_ws, ilens, olens, guided_attn_masks=None, fix_len=None, chunksize=6):
         """Calculate forward propagation.
 
         Args:
@@ -47,7 +62,8 @@ class GuidedAttentionLoss(torch.nn.Module):
             Tensor: Guided attention loss value.
         """
         if self.guided_attn_masks is None:
-            self.guided_attn_masks = self._make_guided_attention_masks(ilens, olens, fix_len).to(att_ws.device)
+            self.guided_attn_masks = self._make_guided_attention_masks(ilens, olens, fix_len, chunksize).to(att_ws.device)
+
             #if len(att_ws.shape) == 4:
             #    self.guided_attn_masks = self.guided_attn_masks.unsqueeze(1)
         if self.masks is None:
@@ -58,11 +74,13 @@ class GuidedAttentionLoss(torch.nn.Module):
         b, ilen, olen = self.masks.shape
         masks_pad[:, :ilen, :olen] = self.masks
         loss = torch.mean(losses.masked_select(masks_pad))
+        temp_guide_mask = self.guided_attn_masks
         if self.reset_always:
             self._reset_masks()
-        return self.alpha * loss
+        #return self.alpha * loss
+        return self.alpha * loss, temp_guide_mask
 
-    def _make_guided_attention_masks(self, ilens, olens, fix_size=None):
+    def _make_guided_attention_masks(self, ilens, olens, fix_size=None, chunksize=6):
         n_batches = len(ilens)
         if fix_size is None:
             max_ilen = int(max(ilens))
@@ -73,12 +91,12 @@ class GuidedAttentionLoss(torch.nn.Module):
         for idx, (ilen, olen) in enumerate(zip(ilens, olens)):
             ilen = int(ilen)
             olen = int(olen)
-            guided_mask = self._make_guided_attention_mask(ilen, olen, self.sigma)
-            guided_attn_masks[idx, :ilen, :olen] = self._make_guided_attention_mask(ilen, olen, self.sigma)
+            #guided_mask = self._make_guided_attention_mask(ilen, olen, self.sigma)
+            guided_attn_masks[idx, :ilen, :olen] = self._make_guided_attention_mask(ilen, olen, self.sigma, chunksize)
         return guided_attn_masks
 
     @staticmethod
-    def _make_guided_attention_mask(ilen, olen, sigma):
+    def _make_guided_attention_mask(ilen, olen, sigma, chunksize=6):
         """Make guided attention mask.
 
         Examples:
@@ -105,7 +123,12 @@ class GuidedAttentionLoss(torch.nn.Module):
         """
         grid_x, grid_y = torch.meshgrid(torch.arange(ilen), torch.arange(olen))
         grid_x, grid_y = grid_x.float(), grid_y.float()
-        return 1.0 - torch.exp(-(grid_y / ilen - grid_x / olen) ** 2 / (2 * (sigma ** 2)))
+        guide_mask = 1.0 - torch.exp(-(grid_y / ilen - grid_x / olen) ** 2 / (2 * (sigma ** 2)))
+        if chunksize > 0:
+            for id, row in enumerate(guide_mask):
+                min_value, min_index = torch.min(row).item(), torch.argmin(row).item()
+                guide_mask[id, max(min_index - chunksize, 0) : min(min_index + chunksize, len(row))] = min_value
+        return guide_mask
 
     @staticmethod
     def _make_masks(ilens, olens):

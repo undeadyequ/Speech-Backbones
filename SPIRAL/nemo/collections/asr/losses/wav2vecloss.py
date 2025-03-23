@@ -65,7 +65,7 @@ class Wav2VecLoss(Loss):
         Args:
             logits: Model activations
             targets: The true target quantized representations
-            negatives: Sampled negatives from the quantizer codebooks. Sampled from all other timesteps.
+            negatives: Sampled negatives from the quantizer codebooks. Sampled from all bk timesteps.
             feature_loss: Feature penalty (L2 Norm)
             prob_ppl_loss: Perplexity Loss with respect to probs in quantization
         Returns:

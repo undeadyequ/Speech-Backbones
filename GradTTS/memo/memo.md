@@ -4,6 +4,14 @@
 - pycharm usage
 
 
+gate_msa mean: tensor(0.5911, device='cuda:0')
+gate_mocha mean: tensor(0.1017, device='cuda:0')
+gate_mlp mean: tensor(0.8358, device='cuda:0')
+gate_msa mean: tensor(0.5994, device='cuda:0')
+gate_mocha mean: tensor(0.1524, device='cuda:0')
+gate_mlp mean: tensor(1.6402, device='cuda:0')
+
+
 
 K R IY1 M Z W IH0 TH sil P IH1 NG K EH1 JH IH0 Z
 

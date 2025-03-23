@@ -31,10 +31,6 @@ import time
 
 cmu = cmudict.CMUDict('/home/rosen/Project/Speech-Backbones/GradTTS/resources/cmu_dictionary')
 
-"""
-
-"""
-
 def get_styles_wavs_from_dict(style_dict, emo_type="index", emo_num=5):
     styles = []
     for emo, mel_spk in style_dict.items():
@@ -194,7 +190,7 @@ def evaluate_prosody_similarity(
                     # Writing data to a file
                     file1.write(synTexts[0])
 
-                # copy reference wav for other syn text
+                # copy reference wav for bk syn text
                 for j, _ in enumerate(synTexts[1:]):
                     shutil.copyfile(ref, out_sub_dir + f"/{emo}_{j + 1}.wav")
                     shutil.copyfile(txt_f, f'{out_sub_dir}/{emo}_{j + 1}.lab')

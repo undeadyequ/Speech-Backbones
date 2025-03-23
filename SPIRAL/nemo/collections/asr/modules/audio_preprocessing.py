@@ -116,7 +116,7 @@ class AudioToMelSpectrogramPreprocessor(AudioPreprocessor):
                 'hamming', 'blackman', 'bartlett']
                 Defaults to "hann"
             normalize (str): Can be one of ['per_feature', 'all_features']; all
-                other options disable feature normalization. 'all_features'
+                bk options disable feature normalization. 'all_features'
                 normalizes the entire spectrogram to be mean 0 with std 1.
                 'pre_features' normalizes per channel / freq instead.
                 Defaults to "per_feature"

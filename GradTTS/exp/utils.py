@@ -9,16 +9,141 @@ import soundfile as sf
 mcd_toolbox = Calculate_MCD(MCD_mode="MCD-DTW")
 
 # two inputs w.r.t. reference (ground-truth) and synthesized speeches, respectively
-#mcd_value = mcd_toolbox.calculate_mcd("001.wav", "002.wav")
-
-
-import librosa
+#mcd_value = mcd_toolbox.calculate_mcd("001.wav", "002.wav")import librosa
 from pymcd.mcd import Calculate_MCD
 import torch
 import tgt
 import numpy as np
 import os
 from GradTTS.const_param import textgrid_dir
+import sys, os, yaml, json
+import numpy as np
+from pathlib import Path
+import torch
+from GradTTS.const_param import emo_melstyleSpk_dict, config_dir, logs_dir, melstyle_dir, wav_dir, wav_dict, emo_num_dict, logs_dir_par, psd_quants_dir
+import shutil
+from GradTTS.utils import parse_filelist, intersperse, get_emo_label
+
+##################### Operate file ##################
+def convert_style2json(style_id):
+    pass
+
+def get_styles_wavs_from_dict(style_dict, emo_type="index", emo_num=5):
+    styles = []
+    for emo, mel_spk in style_dict.items():
+        melstyle, spk = mel_spk
+        emo_tensor = get_emo_label(emo, emo_num_dict, emo_type="index")
+
+        spk_tensor = torch.LongTensor([spk]).cuda()
+        melstyle_tensor = torch.from_numpy(np.load(
+            melstyle_dir + "/" + melstyle)).cuda()
+        melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
+        wav_n = os.path.join(wav_dir, melstyle.split(".")[0] + ".wav")
+        styles.append((emo, spk, wav_n, emo_tensor, melstyle_tensor, spk_tensor))
+    return styles
+
+def get_synText_from_file(synText_f):
+    """
+    he was still in the forest!
+    he was still in the forest!
+    he was still in the forest!
+    """
+    with open(synText_f, 'r', encoding='utf-8') as f:
+        texts = [line.strip() for line in f.readlines()]
+    return texts
+
+
+def get_synStyle_from_file(synStyle_f, split_char="|", melstyle_type="codec",
+                           wav_dir=wav_dir,
+                           psd_quants_dir=psd_quants_dir,
+                           melstyle_dir=melstyle_dir):
+    """
+    get style related features from file with below format
+
+    0019_001103|0019|{HH IY1 W AH0 Z S T IH1 L IH0 N TH IY0 F AO1 R AH0 S T}|he was still in the forest!|Sad
+    psd_quants_dir: FACodec
+    melstyle_dir:   wav2vec2
+    """
+    styles = []
+    syn_styles = parse_filelist(synStyle_f, split_char=split_char)  # emotion changed
+    for speechid, spk, phoneme, txt, emo in syn_styles:
+        spk = int(spk[2:])
+        wav_n = os.path.join(wav_dir, speechid + ".wav")
+        emo_tensor = get_emo_label(emo, emo_num_dict, emo_type="index")
+        spk_tensor = torch.LongTensor([spk]).cuda()
+        if melstyle_type == "codec":
+            melstyle_tensor = torch.from_numpy(np.load(psd_quants_dir + "/" + speechid + ".npy")).cuda()
+        else:
+            melstyle_tensor = torch.from_numpy(np.load(melstyle_dir + "/" + speechid + ".npy")).cuda()
+            melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
+        styles.append((emo, spk, wav_n, txt, emo_tensor, melstyle_tensor, spk_tensor))
+    return styles
+
+
+def fine_adjust_configs(bone_n, bone_option, bone2configPath, config_dir):
+    """
+    fine-adjust model/train configs of bone_n by bone_option
+    Returns:
+
+    """
+    preprocess, model_config, train_config = bone2configPath[bone_n]
+    preprocess_config = yaml.load(
+        open(config_dir + "/" + preprocess, "r"), Loader=yaml.FullLoader)
+    model_config = yaml.load(open(
+        config_dir + "/" + model_config, "r"), Loader=yaml.FullLoader)
+    train_config = yaml.load(open(
+        config_dir + "/" + train_config, "r"), Loader=yaml.FullLoader)
+    if bone_n == "stditCross":
+        if bone_option == "guideLoss":
+            model_config["stditCross"]["guide_loss"] = True
+            train_config["path"]["log_dir"] = train_config["path"]["log_dir"].replace("base", "guideLoss")
+        if bone_option == "":
+            pass
+    return preprocess_config, model_config, train_config
+
+def copy_ref_speech(src_wavs, src_txts, dst_wavs, dst_txts):
+    for src_wav, src_txt, dst_wav, dst_txt in zip(src_wavs, src_txts, dst_wavs, dst_txts):
+        shutil.copyfile(src_wav, dst_wav)
+        with open(dst_txt, "w") as file1:
+            # Writing data to a file
+            file1.write(src_txt)
+
+def convert_vis_psd_json(prosody_dict_json, show_txt_id=0):
+    """
+    {"emo1": {"model1": {"psd1/phone": []}}} -> {"emo1": {"model1": list(psd_len)}}}
+    """
+    pitch_dict_for_vis = dict()  # for_vis: {"emo1": {"model1": list(psd_len)}}}
+    for emo, m_psd in prosody_dict_json.items():
+        pitch_dict_for_vis[emo] = {}
+        for model, psd in m_psd.items():
+            if model not in pitch_dict_for_vis[emo].keys():
+                pitch_dict_for_vis[emo][model] = []
+                pitch_dict_for_vis[emo][model] = psd["pitch"][show_txt_id]
+    return pitch_dict_for_vis
+
+def convert_attn_json(prosody_dict_json, out_dir, show_t=0, show_b=0, show_h=0, show_txt=0):
+    """
+    For visualizing crossAttn
+    - auxiliary line given mfa duration ?
+
+    """
+    crossAttn_dict_for_vis = dict()  # {"model1": {"emo1": np.array([syn_frames, ref_frames])}}}  <- choose t and h from attn_map_dict
+    crossAttn_dict_for_vis_aux = dict()  # {"model1": {"emo1": ([pdurs_nums], [p_nums])}}}
+    print("4. Vis attention map given attn file")
+
+    for emo, m_psd in prosody_dict_json.items():
+        for model, psd in m_psd.items():
+            if model != "reference":
+                crossAttn_dir = os.path.join(out_dir, model + "_attn/")
+                crossAttn_f = crossAttn_dir + prosody_dict_json[emo][model]["speechid"][show_txt] + ".npy"
+                if model not in crossAttn_dict_for_vis.keys():
+                    crossAttn_dict_for_vis[model] = {}
+                if emo not in crossAttn_dict_for_vis.keys():
+                        crossAttn_dict_for_vis[model][emo] = {}
+                crossAttn_dict_for_vis[model][emo] = np.load(crossAttn_f, allow_pickle=True)[show_t, show_b, 0, show_h, ...]  # [time, block_n, batch, head, t_t, t_s]
+    return crossAttn_dict_for_vis
+
+
 
 def get_pitch_match_score(pitch1, pitch2):
     pitch_score = 0

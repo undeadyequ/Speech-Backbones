@@ -10,7 +10,7 @@ path:
   result_path: "./output/result/ESD"
 # train
 n_epochs: 1000
-resume_epoch: 80  # 116 for linear, 65 for .._nojoint  800 for stdit
+resume_epoch: 0  # 116 for linear, 65 for .._nojoint  800 for stdit
 batch_size: 64     # 64, 2
 learning_rate: 1e-4
 seed: 37
@@ -21,11 +21,9 @@ seed: 37
 # 3. save in every epoch
 test_size: 3
 
-
 # save model
 save_every: 5
 show_img_per_epoch: 5.0
-
 
 # log_dir
 # gradtts_crossSelf_puncond_n1_neworder_fixmask:

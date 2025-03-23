@@ -1178,7 +1178,7 @@ class LoraLoaderMixin:
 
         # "scheduler" does not correspond to a LoRA checkpoint.
         # "optimizer" does not correspond to a LoRA checkpoint
-        # only top-level checkpoints are considered and not the other ones, hence "checkpoint".
+        # only top-level checkpoints are considered and not the bk ones, hence "checkpoint".
         unallowed_substrings = {"scheduler", "optimizer", "checkpoint"}
         targeted_files = list(
             filter(lambda x: all(substring not in x for substring in unallowed_substrings), targeted_files)

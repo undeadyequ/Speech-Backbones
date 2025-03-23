@@ -422,7 +422,7 @@ class DPMSolverSDEScheduler(SchedulerMixin, ConfigMixin):
             min_sigma, max_sigma = self.sigmas[self.sigmas > 0].min(), self.sigmas.max()
             self.noise_sampler = BrownianTreeNoiseSampler(sample, min_sigma, max_sigma, self.noise_sampler_seed)
 
-        # Define functions to compute sigma and t from each other
+        # Define functions to compute sigma and t from each bk
         def sigma_fn(_t: torch.FloatTensor) -> torch.FloatTensor:
             return _t.neg().exp()
 

@@ -469,7 +469,7 @@ def pytest_terminal_summary_main(tr, id):
     Args:
     - tr: `terminalreporter` passed from `conftest.py`
     - id: unique id like `tests` or `examples` that will be incorporated into the final reports filenames - this is
-      needed as some jobs have multiple runs of pytest, so we can't have them overwrite each other.
+      needed as some jobs have multiple runs of pytest, so we can't have them overwrite each bk.
 
     NB: this functions taps into a private _pytest API and while unlikely, it could break should
     pytest do internal changes - also it calls default internal methods of terminalreporter which

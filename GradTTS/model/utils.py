@@ -12,18 +12,43 @@ import math
 
 ###################### Mask Related #############################
 
+def sequence_dur(durs, seq_len):
+    """
+    sequence duration
+    dur:     (b, mu_x_len)
+    seq_len: (b, y_len)
+    Returns
+        dur_seq: (b, 1, y_len)
+    Examples:
+        # value = Index of phoneme,    times = nums of frame in this phoenme
+        [[1, 3, 2], [2, 4, 1]]  ->
+        [1, 2, 2, 2, 3, 3, 0], [1, 1, 2, 2, 2, 2, 3]]
+    """
+    durs_seq = torch.zeros_like(seq_len, device=durs.device)
+    for i, dur in enumerate(durs.int()):
+        dur_index = torch.arange(len(dur)).to(durs.device)   # dur
+        dur_repeat = torch.repeat_interleave(dur_index, dur)  # repeat each element of dur by dur times
+        durs_seq[i, :len(dur_repeat)] = dur_repeat
+    return durs_seq
+
+
+
 def sequence_mask(length, max_length=None):
+    """
+    sequence mask
+    length: (b, 1)  -> (b, max(length))
+    """
     if max_length is None:
         max_length = length.max()
     x = torch.arange(int(max_length), dtype=length.dtype, device=length.device)
     return x.unsqueeze(0) < length.unsqueeze(1)
+
 
 def fix_len_compatibility(length, num_downsamplings_in_unet=2):
     while True:
         if length % (2**num_downsamplings_in_unet) == 0:
             return length
         length += 1
-
 
 def convert_pad_shape(pad_shape):
     l = pad_shape[::-1]

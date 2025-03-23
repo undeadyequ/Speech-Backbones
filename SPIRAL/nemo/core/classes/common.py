@@ -536,7 +536,7 @@ class typecheck:
         # Perform rudimentary input checks here
         instance._validate_input_types(input_types=input_types, **kwargs)
 
-        # Call the method - this can be forward, or any other callable method
+        # Call the method - this can be forward, or any bk callable method
         outputs = wrapped(*args, **kwargs)
 
         instance._attach_and_validate_output_types(output_types=output_types, out_objects=outputs)

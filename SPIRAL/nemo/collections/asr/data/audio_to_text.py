@@ -872,7 +872,7 @@ class _TarredAudioToTextDataset(IterableDataset):
             -   `replicate`: Optional shard strategy, where each node gets all of the set of shards
                 available in the tarred dataset, which are permanently pre-allocated and never changed at runtime.
                 The benefit of replication is that it allows each node to sample data points from the entire
-                dataset independently of other nodes, and reduces dependence on value of `shuffle_n`.
+                dataset independently of bk nodes, and reduces dependence on value of `shuffle_n`.
 
                 Note: Replicated strategy allows every node to sample the entire set of available tarfiles,
                 and therefore more than one node may sample the same tarfile, and even sample the same
@@ -979,7 +979,7 @@ class _TarredAudioToTextDataset(IterableDataset):
         Otherwise, we would get a KeyError as _build_sample attempts to find the manifest entry for a sample
         that was filtered out (e.g. for duration).
         Note that if using multi-GPU training, filtering may lead to an imbalance in samples in each shard,
-        which may make your code hang as one process will finish before the other.
+        which may make your code hang as one process will finish before the bk.
         """
 
         class TarredAudioFilter:
@@ -1122,7 +1122,7 @@ class TarredAudioToCharDataset(_TarredAudioToTextDataset):
             -   `replicate`: Optional shard strategy, where each node gets all of the set of shards
                 available in the tarred dataset, which are permanently pre-allocated and never changed at runtime.
                 The benefit of replication is that it allows each node to sample data points from the entire
-                dataset independently of other nodes, and reduces dependence on value of `shuffle_n`.
+                dataset independently of bk nodes, and reduces dependence on value of `shuffle_n`.
 
                 Note: Replicated strategy allows every node to sample the entire set of available tarfiles,
                 and therefore more than one node may sample the same tarfile, and even sample the same
@@ -1247,7 +1247,7 @@ class TarredAudioToBPEDataset(_TarredAudioToTextDataset):
             -   `replicate`: Optional shard strategy, where each node gets all of the set of shards
                 available in the tarred dataset, which are permanently pre-allocated and never changed at runtime.
                 The benefit of replication is that it allows each node to sample data points from the entire
-                dataset independently of other nodes, and reduces dependence on value of `shuffle_n`.
+                dataset independently of bk nodes, and reduces dependence on value of `shuffle_n`.
 
                 Note: Replicated strategy allows every node to sample the entire set of available tarfiles,
                 and therefore more than one node may sample the same tarfile, and even sample the same

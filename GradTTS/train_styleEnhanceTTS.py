@@ -220,6 +220,7 @@ def train_process_cond(configs):
         print('Synthesis...')
         with (torch.no_grad()):
             for j, item in enumerate(test_batch):
+                break
                 x = item['x'].to(torch.long).unsqueeze(0).cuda()
                 x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
                 spk = item['spk'].to(torch.long).cuda()
@@ -294,7 +295,7 @@ def train_process_cond(configs):
                 spk = batch['spk'].cuda()
                 #emo = batch['emo'].cuda()
                 melstyle = batch["melstyle"].cuda()
-                melstyle_len = batch["melstyle_lengths"].cuda()  # Use it rather than x_mask
+                melstyle_lengths = batch["melstyle_lengths"].cuda()  # Use it rather than x_mask
                 emo_label = batch["emo_label"].cuda()
 
                 #if datatype == "psd" and psd_gran == "frame":

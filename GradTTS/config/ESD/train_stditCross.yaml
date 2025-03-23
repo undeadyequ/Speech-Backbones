@@ -1,0 +1,35 @@
+# log_dir ->
+# interpEmoTTS_frame2binAttn_noJoint: ConditionalGradTTS
+# styleEnhancedTTS
+
+
+
+
+path:
+  ckpt_path: "./output/ckpt/ESD"
+  # interpEmoTTS_frame2frameAttn, interpEmoTTS_linearAttn, interpEmoTTS_frame2frameAttn_noJoint
+  log_dir: "/home/rosen/Project/Speech-Backbones/GradTTS/logs/stditCross_guideloss_codec" # for training   stditTest/stditMocha_norm
+  #log_dir: "/home/acc12642fx/project/Speech-Backbones/GradTTS/logs/interpEmoTTS_frame2binAttn_noJoint/" # for training
+  result_path: "./output/result/ESD"
+# train
+n_epochs: 1000
+resume_epoch: 1  # 116 for linear, 65 for .._nojoint  800 for stdit
+batch_size: 64     # 64, 2
+learning_rate: 1e-4
+seed: 37
+
+# evaluation:
+# 1. save gd/enc/dec/align images of each test in logger
+# 2. do 1 in plot and synthesize speech of each test for show_img_per_epoch (=5) a time, and first 3 epoch
+# 3. save in every epoch
+test_size: 3
+
+
+# save model
+save_every: 10
+show_img_per_epoch: 10.0
+
+
+# log_dir
+# gradtts_crossSelf_puncond_n1_neworder_fixmask:
+# interpEmoTTS_frame2frameAttn: frame to frame attention

@@ -511,7 +511,7 @@ class ModelPT(LightningModule, Model):
 
             To restore a model from a Model level checkpoint
             ```
-            model = nemo.collections.asr.models.EncDecCTCModel(cfg)  # or any other method of restoration
+            model = nemo.collections.asr.models.EncDecCTCModel(cfg)  # or any bk method of restoration
             model.load_state_dict(torch.load("./asr_ckpts/model_weights.ckpt"))
             ```
 
@@ -523,7 +523,7 @@ class ModelPT(LightningModule, Model):
 
             To restore a module from a Module level checkpoint
             ```
-            model = model = nemo.collections.asr.models.EncDecCTCModel(cfg)  # or any other method of restoration
+            model = model = nemo.collections.asr.models.EncDecCTCModel(cfg)  # or any bk method of restoration
 
             # load the individual components
             model.preprocessor.load_state_dict(torch.load("./asr_ckpts/preprocessor.ckpt"))
@@ -816,7 +816,7 @@ class ModelPT(LightningModule, Model):
             optimizer_args = copy.deepcopy(optim_config)
 
             # Remove extra parameters from optimizer_args nest
-            # Assume all other parameters are to be passed into optimizer constructor
+            # Assume all bk parameters are to be passed into optimizer constructor
             optimizer_args.pop('name', None)
             optimizer_args.pop('cls', None)
             optimizer_args.pop('lr', None)
@@ -962,7 +962,7 @@ class ModelPT(LightningModule, Model):
                         for k_log, v_log in v.items():
                             # If we are logging the metric, but dont provide it at result level,
                             # store it twice - once in log and once in result level.
-                            # Also mark log with prefix name to avoid log level clash with other data loaders
+                            # Also mark log with prefix name to avoid log level clash with bk data loaders
                             if k_log not in output_dict['log'] and dataloader_idx == self._val_dl_idx:
                                 new_k_log = k_log
 
@@ -1056,7 +1056,7 @@ class ModelPT(LightningModule, Model):
                         for k_log, v_log in v.items():
                             # If we are logging the loss, but dont provide it at result level,
                             # store it twice - once in log and once in result level.
-                            # Also mark log with prefix name to avoid log level clash with other data loaders
+                            # Also mark log with prefix name to avoid log level clash with bk data loaders
                             if k_log not in output_dict['log'] and dataloader_idx == self._test_dl_idx:
                                 new_k_log = k_log
 

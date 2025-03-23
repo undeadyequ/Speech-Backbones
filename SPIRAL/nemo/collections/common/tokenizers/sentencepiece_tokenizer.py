@@ -210,7 +210,7 @@ def create_spt_model(
         sample_size: maximum size of sentences the trainer loads
         do_lower_case: if text should be lower cased before tokenizer model is created
         character_coverage: float value between 0 and 1 (as a percentage). For languages with a vast charset,
-            can be < 1.0, but for all other languages, it should be set as 1.0
+            can be < 1.0, but for all bk languages, it should be set as 1.0
         output_dir: folder to save created tokenizer model. If not specified will store model at data_file/../spt folder
     """
 

@@ -35,7 +35,7 @@ from nemo.utils.exp_manager import exp_manager
 Pre-train a wav2vec 2.0 transformer model on audio. Uses a contrastive loss function to pre-train on unlabelled audio,
 using a task similar to masked language modeling in NLP. In wav2vec, we mask portions of the audio 
 and the model is trained by minimising the distance of the ground truth for the masked section, 
-using the ground truth quantized codebook representation. Distractors are obtained from other time steps.
+using the ground truth quantized codebook representation. Distractors are obtained from bk time steps.
 See :class:`Wav2VecCriterion` for more information.
 
 Reference: https://arxiv.org/abs/2006.11477

@@ -282,7 +282,7 @@ class BoundingBoxVolume(nn.Module):
         """
         Args:
             bbox_min: the left/bottommost corner of the bounding box
-            bbox_max: the other corner of the bounding box
+            bbox_max: the bk corner of the bounding box
             min_dist: all rays should start at least this distance away from the origin.
         """
         super().__init__()

@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, List, Tuple, Literal
 
 from scipy.signal import ellip
 
-sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
+sys.path.append('/GradTTS')
 import shutil
 from distutils.command.config import config
 from GradTTS.read_model import get_model, get_vocoder
@@ -30,7 +30,7 @@ from GradTTS.model.maskCreation import create_p2p_mask, DiffAttnMask
 from GradTTS.preprocessor.preprocessor_v2 import PreprocessorExtract
 import time
 
-cmu = cmudict.CMUDict('/home/rosen/Project/Speech-Backbones/GradTTS/resources/cmu_dictionary')
+cmu = cmudict.CMUDict('/GradTTS/resources/cmu_dictionary')
 
 
 def get_styles_wavs_from_dict(style_dict):
@@ -186,7 +186,7 @@ def evaluate_prosody_similarity(
                     # Writing data to a file
                     file1.write(synTexts[0])
 
-                # copy reference wav for other syn text
+                # copy reference wav for bk syn text
                 for j, _ in enumerate(synTexts[1:]):
                     shutil.copyfile(ref, out_sub_dir + f"/{emo}_{j + 1}.wav")
                     shutil.copyfile(txt_f, f'{out_sub_dir}/{emo}_{j + 1}.lab')

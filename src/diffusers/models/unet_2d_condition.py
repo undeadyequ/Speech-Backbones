@@ -113,7 +113,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             If `encoder_hid_dim_type` is defined, `encoder_hidden_states` will be projected from `encoder_hid_dim`
             dimension to `cross_attention_dim`.
         encoder_hid_dim_type (`str`, *optional*, defaults to `None`):
-            If given, the `encoder_hidden_states` and potentially other embeddings are down-projected to text
+            If given, the `encoder_hidden_states` and potentially bk embeddings are down-projected to text
             embeddings of dimension `cross_attention` according to `encoder_hid_dim_type`.
         attention_head_dim (`int`, *optional*, defaults to 8): The dimension of the attention heads.
         num_attention_heads (`int`, *optional*):

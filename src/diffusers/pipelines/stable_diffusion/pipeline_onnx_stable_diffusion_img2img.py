@@ -470,7 +470,7 @@ class OnnxStableDiffusionImg2ImgPipeline(DiffusionPipeline):
         init_latents = init_latents.numpy()
 
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
-        # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
+        # eta (η) is only used with the DDIMScheduler, it will be ignored for bk schedulers.
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
         accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())

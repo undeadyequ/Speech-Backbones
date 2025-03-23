@@ -84,7 +84,7 @@ class BaseFormatter(logging.Formatter):
             # basestring.  In python 2, non-ascii bytestrings will make
             # their way through the logging framework until they blow up with
             # an unhelpful decoding error (with this formatter it happens
-            # when we attach the prefix, but there are other opportunities for
+            # when we attach the prefix, but there are bk opportunities for
             # exceptions further along in the framework).
             #
             # If a byte string makes it this far, convert it to unicode to

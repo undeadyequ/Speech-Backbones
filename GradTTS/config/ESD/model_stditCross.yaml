@@ -1,0 +1,81 @@
+datatype: "FACodec"        # wav2vec2/mel/FACodec/FACodec
+
+inference:
+  stoc: False # default = True
+  temperature: 1.0 # terminal variance
+  n_timesteps: 50
+  length_scale: 1.0 # speech pace
+
+# bk
+stditCross:
+  n_spks: 30    # 247 Libri-TTS 1 LJSpeech, ESD 10
+  spk_emb_dim: 64
+  gStyle_dim: 5   #
+  gStyle_out: 80   #
+  n_feats: 80
+  dec_dim: 64
+  psd_n: 0
+  # option
+  qk_norm: False
+  mono_hard_mask: False
+  mono_mas_mask: False
+  guide_loss: False
+  ref_encoder_type: 'mlp'   #  vae, vaeEma vaeGRL
+  global_norm: False
+  # submodels
+  text_encoder_config:
+    n_channels: 128
+    filter_channels: 128
+    filter_channels_dp: 128
+    n_heads: 2
+    n_layers: 2
+    kernel_size: 3
+    p_dropout: 0.1
+    window_size: 4
+  ref_encoder_config:
+    lStyle_dim:  256 # 768(wav2vect2) or 2(psd) or 256(FACodec)
+    lStyle_out: 80
+  decoder_config:
+    beta_min: 0.05
+    beta_max: 20.0
+    stdit_config:
+      noise_channels: 80
+      cond_channels: 80
+      crossCond_channels: 80
+      hidden_channels: 256
+      out_channels: 80
+      filter_channels: 1024   # FFN in block
+      dropout: 0.1
+      n_layers: 6
+      n_heads: 4
+      kernel_size: 3
+      use_lsc: True
+      phoneme_RoPE: False
+
+# ref_encoder options
+ref_encoder_mlp:
+  pass
+
+ref_encoder_vae:
+  mel_bins: 80
+  stride: 8
+  hidden_size: 240
+  kernel_size: 5
+  n_layers: 3
+  n_stacks: 5
+  n_blocks: 2
+  vq_bins: 1024
+  vq_dim: 256
+  activation: 'ReLU'
+
+ref_encoder_vaeEma:
+  c_in: 80
+  num_layer: 6
+  c_h: 128
+  c_out: 80     # 192
+  c_out_g: 80   # 192
+  commit_w: 0.25
+  n_emb: 512
+
+ref_encoder_vaeGRL:
+  pass

@@ -466,7 +466,7 @@ def prepare_lr_scheduler(
 
     Returns:
         A dictionary containing the LR Scheduler implementation if the config was successfully parsed
-        along with other parameters required by Pytorch Lightning, otherwise None.
+        along with bk parameters required by Pytorch Lightning, otherwise None.
     """
     # Build nested dictionary for convenience out of structured objects
     if isinstance(scheduler_config, DictConfig):
@@ -488,7 +488,7 @@ def prepare_lr_scheduler(
             scheduler_args = copy.deepcopy(scheduler_config)
 
             # Remove extra parameters from scheduler_args nest
-            # Assume all other parameters are to be passed into scheduler constructor
+            # Assume all bk parameters are to be passed into scheduler constructor
 
             if 'name' in scheduler_args and scheduler_args['name'] == 'ReduceLROnPlateau':
                 add_max_args_flag = False

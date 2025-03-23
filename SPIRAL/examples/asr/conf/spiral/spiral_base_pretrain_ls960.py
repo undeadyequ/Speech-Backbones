@@ -168,7 +168,7 @@ model.loss = LossConfig(
 
 
 model.train_ds = AudioDatasetConfig(
-    manifest_filepath='manifest_json/librivox-train-clean-100.json,manifest_json/librivox-train-clean-360.json,manifest_json/librivox-train-other-500.json',
+    manifest_filepath='manifest_json/librivox-train-clean-100.json,manifest_json/librivox-train-clean-360.json,manifest_json/librivox-train-bk-500.json',
     sample_rate=sample_rate,
     batch_size=24,
     min_duration=2.0,

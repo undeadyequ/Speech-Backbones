@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import GradTTS.model.estimator
-from GradTTS.model.estimator.stditBlock import DiTConVBlock, DiTConVMochaBlock
+from GradTTS.model.estimator.stditBlock import DiTConVBlock, DiTConVMochaBlock, DiTConVCrossBlock
 
 
 class STDit(nn.Module):
@@ -126,31 +126,17 @@ class STDit(nn.Module):
 
 class DitWrapper(nn.Module):
     """ add FiLM layer to condition time embedding to DiT """
-
     def __init__(self, hidden_channels, filter_channels, num_heads, kernel_size=3, p_dropout=0.1, gin_channels=0,
                  monotonic_approach="no", time_channels=0, block_type="mocha", **mochaAttn_kwargs):
         super().__init__()
         self.block_type = block_type
         self.time_fusion = FiLMLayer(hidden_channels, time_channels)
-        if block_type == "base":
-            self.block = DiTConVBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout, gin_channels)
-        elif block_type == "cross":
-            self.block = DiTConVBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout, gin_channels)
-        elif block_type == "mocha":
-            self.block = DiTConVMochaBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout,
+        self.block = DiTConVMochaBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout,
                                            gin_channels, monotonic_approach, **mochaAttn_kwargs)
-        else:
-            print("Block type should be ...")
-
-
     def forward(self, x, c, t, x_mask, r=None, attnCross=None):
         x = self.time_fusion(x, t) * x_mask
-        if self.block_type == "mocha":
-            # t: (b, hid_dim), x: (b, hid_dim, cut_l), mask: (b, ), c: (b, hid_dim), r: (b, hid_dim, cut_l)
-            x, cross_attn = self.block(x, c, r=r, x_mask=x_mask, attnCross=attnCross)
-        else:
-            cross_attn = None
-            x = self.block(x, c, x_mask=x_mask)
+        # t: (b, hid_dim), x: (b, hid_dim, cut_l), mask: (b, ), c: (b, hid_dim), r: (b, hid_dim, cut_l)
+        x, cross_attn = self.block(x, c, r=r, x_mask=x_mask, attnCross=attnCross)
         return x, cross_attn
 
 class FiLMLayer(nn.Module):

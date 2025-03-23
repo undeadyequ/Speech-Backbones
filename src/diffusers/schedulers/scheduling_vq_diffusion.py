@@ -328,11 +328,11 @@ class VQDiffusionScheduler(SchedulerMixin, ConfigMixin):
         #
         # From equation (11) stated in terms of forward probabilities, the last row is trivially verified.
         #
-        # For the other rows, we can state the equation as ...
+        # For the bk rows, we can state the equation as ...
         #
         # (c_t / c_cumulative_t) * [b_cumulative_{t-1} * p(x_0=c_0) + ... + (a_cumulative_{t-1} + b_cumulative_{t-1}) * p(x_0=C_i) + ... + b_cumulative_{k-1} * p(x_0=c_{k-1})]
         #
-        # This verifies the other rows.
+        # This verifies the bk rows.
         #
         # 2. x_t is not masked
         #
@@ -350,7 +350,7 @@ class VQDiffusionScheduler(SchedulerMixin, ConfigMixin):
         #                                                      .
         # 0
         #
-        # The last row is trivially verified. The other rows can be verified by directly expanding equation (11) stated in terms of forward probabilities.
+        # The last row is trivially verified. The bk rows can be verified by directly expanding equation (11) stated in terms of forward probabilities.
         return log_p_x_t_min_1
 
     def log_Q_t_transitioning_to_known_class(

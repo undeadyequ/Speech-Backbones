@@ -1,3 +1,31 @@
+# models for evaluation (model_config_input_extra)
+## model -> BoneModel
+- stdit
+- stditCross: self + cross + FFT
+- stditMocha:
+- unet: unet model
+- dit: DiT model
+## config -> small change
+- base
+- qkNorm
+- monoHard: hard monotonic attention mask
+- guideLoss: guide crossAttention by monotonic matrix
+- phonemeRoPE: phoneme-level positional Embedding
+- refEncoder: mlp/vae/vaeGRL
+## input -> ref
+- wav2vec2: or melstyle
+- pCodec: prosody
+- melVae: vae of melspectrogram
+- melVaeGRL: vae of melspectrogram with GRL to phoneme
+## extra
+- noGlobal
+
+
+# Implement plan
+
+model.yaml
+
+
 interpEmoTTS_frame2binAttn_noJoint
 other
 styleEnhancedTTS

@@ -66,7 +66,7 @@ class DDIMPipeline(DiffusionPipeline):
                 generation deterministic.
             eta (`float`, *optional*, defaults to 0.0):
                 Corresponds to parameter eta (η) from the [DDIM](https://arxiv.org/abs/2010.02502) paper. Only applies
-                to the [`~schedulers.DDIMScheduler`], and is ignored in other schedulers. A value of `0` corresponds to
+                to the [`~schedulers.DDIMScheduler`], and is ignored in bk schedulers. A value of `0` corresponds to
                 DDIM and `1` corresponds to DDPM.
             num_inference_steps (`int`, *optional*, defaults to 50):
                 The number of denoising steps. More denoising steps usually lead to a higher quality image at the

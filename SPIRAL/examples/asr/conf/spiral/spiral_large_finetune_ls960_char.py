@@ -73,7 +73,7 @@ model.decoder = ConvASRDecoderConfig(
 )
 
 model.train_ds = DatasetConfig(
-    manifest_filepath='manifest_json/librivox-train-clean-100.json,manifest_json/librivox-train-clean-360.json,manifest_json/librivox-train-other-500.json',
+    manifest_filepath='manifest_json/librivox-train-clean-100.json,manifest_json/librivox-train-clean-360.json,manifest_json/librivox-train-bk-500.json',
     labels=LABELS,
     sample_rate=sample_rate,
     batch_size=10,
@@ -84,7 +84,7 @@ model.train_ds = DatasetConfig(
 )
 
 model.validation_ds = DatasetConfig(
-    manifest_filepath='manifest_json/librivox-dev-other.json',
+    manifest_filepath='manifest_json/librivox-dev-bk.json',
     labels=LABELS,
     sample_rate=sample_rate,
     batch_size=10,

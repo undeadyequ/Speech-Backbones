@@ -3,29 +3,29 @@
 librispeech_datasets = {
     "train": {
         "clean": ["LibriSpeech/train-clean-100", "LibriSpeech/train-clean-360"],
-        "other": ["LibriSpeech/train-other-500"]
+        "bk": ["LibriSpeech/train-bk-500"]
     },
     "test": {
         "clean": ["LibriSpeech/test-clean"],
-        "other": ["LibriSpeech/test-other"]
+        "bk": ["LibriSpeech/test-bk"]
     },
     "dev": {
         "clean": ["LibriSpeech/dev-clean"],
-        "other": ["LibriSpeech/dev-other"]
+        "bk": ["LibriSpeech/dev-bk"]
     },
 }
 libritts_datasets = {
     "train": {
         "clean": ["LibriTTS/train-clean-100", "LibriTTS/train-clean-360"],
-        "other": ["LibriTTS/train-other-500"]
+        "bk": ["LibriTTS/train-bk-500"]
     },
     "test": {
         "clean": ["LibriTTS/test-clean"],
-        "other": ["LibriTTS/test-other"]
+        "bk": ["LibriTTS/test-bk"]
     },
     "dev": {
         "clean": ["LibriTTS/dev-clean"],
-        "other": ["LibriTTS/dev-other"]
+        "bk": ["LibriTTS/dev-bk"]
     },
 }
 voxceleb_datasets = {

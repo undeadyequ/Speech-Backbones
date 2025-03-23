@@ -61,7 +61,7 @@ class DiffAttnMask:
         else:
             raise IOError("NOT SURE!")
 
-        # Create attn mask of other layers of unet
+        # Create attn mask of bk layers of unet
         num_resolutions = len(self.in_out)
         p2p_masks_dict["down"].append(p2p_mask)
         identity = torch.nn.Identity()
@@ -101,7 +101,7 @@ class DiffAttnMask:
         else:
             raise IOError("NOT SURE!")
 
-        # Create attn mask of other layers of unet
+        # Create attn mask of bk layers of unet
         num_resolutions = len(self.in_out)
         p2p_masks_dict["down"].append(p2p_mask)
         identity = torch.nn.Identity()

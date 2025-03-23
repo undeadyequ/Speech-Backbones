@@ -83,7 +83,7 @@ model.train_ds = DatasetConfig(
     pin_memory=True,
 )
 model.validation_ds = DatasetConfig(
-    manifest_filepath='manifest_json/librivox-dev-other.json',
+    manifest_filepath='manifest_json/librivox-dev-bk.json',
     labels=LABELS,
     sample_rate=sample_rate,
     batch_size=18,

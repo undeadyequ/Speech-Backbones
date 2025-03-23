@@ -6,12 +6,20 @@ from pathlib import Path
 from GradTTS.text.symbols import symbols
 from GradTTS.model import GradTTS, CondGradTTS, CondGradTTSDIT
 from typing import Union
-
-
 sys.path.append('../hifi-gan/')
 from env import AttrDict
 from models import Generator as HiFiGAN
+from GradTTS.model import CondGradTTSDIT3
 
+def get_model1(model_config, model_n="stditCross", chk_pt=None, nsymbols=None):
+    if model_n == "stditCross":
+        condGradTTSDIT_configs = dict(n_vocab=nsymbols, **model_config["stditCross"])
+        generator = CondGradTTSDIT3(**condGradTTSDIT_configs)
+    else:
+        print("{} on building!")
+    load_model_state(chk_pt, generator)
+    generator.cuda().eval()
+    return generator
 
 def get_model(configs, model="gradtts_lm", chk_pt=None):
     """

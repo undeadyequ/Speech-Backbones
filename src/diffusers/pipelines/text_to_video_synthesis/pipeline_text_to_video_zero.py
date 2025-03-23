@@ -41,7 +41,7 @@ class CrossFrameAttnProcessor:
     Cross frame attention processor. Each frame attends the first frame.
 
     Args:
-        batch_size: The number that represents actual batch size, other than the frames.
+        batch_size: The number that represents actual batch size, bk than the frames.
             For example, calling unet with a single prompt and num_images_per_prompt=1, batch_size should be equal to
             2, due to classifier-free guidance.
     """
@@ -100,7 +100,7 @@ class CrossFrameAttnProcessor2_0:
     Cross frame attention processor with scaled_dot_product attention of Pytorch 2.0.
 
     Args:
-        batch_size: The number that represents actual batch size, other than the frames.
+        batch_size: The number that represents actual batch size, bk than the frames.
             For example, calling unet with a single prompt and num_images_per_prompt=1, batch_size should be equal to
             2, due to classifier-free guidance.
     """
@@ -466,7 +466,7 @@ class TextToVideoZeroPipeline(StableDiffusionPipeline):
                 The number of videos to generate per prompt.
             eta (`float`, *optional*, defaults to 0.0):
                 Corresponds to parameter eta (η) from the [DDIM](https://arxiv.org/abs/2010.02502) paper. Only applies
-                to the [`~schedulers.DDIMScheduler`], and is ignored in other schedulers.
+                to the [`~schedulers.DDIMScheduler`], and is ignored in bk schedulers.
             generator (`torch.Generator` or `List[torch.Generator]`, *optional*):
                 A [`torch.Generator`](https://pytorch.org/docs/stable/generated/torch.Generator.html) to make
                 generation deterministic.

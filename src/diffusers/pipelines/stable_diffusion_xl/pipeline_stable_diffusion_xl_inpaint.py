@@ -134,7 +134,7 @@ def prepare_mask_and_masked_image(image, mask, height, width, return_image: bool
         ValueError: ``torch.Tensor`` images should be in the ``[-1, 1]`` range. ValueError: ``torch.Tensor`` mask
         should be in the ``[0, 1]`` range. ValueError: ``mask`` and ``image`` should have the same spatial dimensions.
         TypeError: ``mask`` is a ``torch.Tensor`` but ``image`` is not
-            (ot the other way around).
+            (ot the bk way around).
 
     Returns:
         tuple[torch.Tensor]: The pair (mask, masked_image) as ``torch.Tensor`` with 4
@@ -582,7 +582,7 @@ class StableDiffusionXLInpaintPipeline(DiffusionPipeline, LoraLoaderMixin, FromS
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_extra_step_kwargs
     def prepare_extra_step_kwargs(self, generator, eta):
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
-        # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
+        # eta (η) is only used with the DDIMScheduler, it will be ignored for bk schedulers.
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
 

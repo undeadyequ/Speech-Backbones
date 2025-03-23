@@ -62,7 +62,7 @@ class SampleGuidence(BaseModule):
             alpha=0.08
     ):
         """
-        Guide sample with two ref audios (One ref for pitch, other for NONPitch part)
+        Guide sample with two ref audios (One ref for pitch, bk for NONPitch part)
         Args:
             x:
             guid_mask:
