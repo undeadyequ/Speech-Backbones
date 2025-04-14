@@ -72,7 +72,7 @@ class STDit3(nn.Module):
             nn.init.constant_(block.block.adaLN_modulation[-1].weight, 0)
             nn.init.constant_(block.block.adaLN_modulation[-1].bias, 0)
 
-    def forward(self, t, x, mask, mu, c, r=None, attnCross=None, seq_dur=None):
+    def forward(self, t, x, mask, mu, c, r=None, attnCross=None, q_seq_dur=None,  k_seq_dur=None):
         """Forward pass of the DiT model.
 
         Args:
@@ -106,7 +106,7 @@ class STDit3(nn.Module):
                     x = torch.cat((x, lsc_outputs.pop()), dim=1)
                     x = self.lsc_layers[idx - self.n_lsc_layers](x)
             # t: (b, hid_dim), x: (b, hid_dim, cut_l), mask: (b, ), c: (b, emo_dim), r: (b, mel_dim, cut_l)
-            x, cross_attn = block(x, c, t, mask, r=r, attnCross=attnCross, seq_dur=seq_dur)
+            x, cross_attn = block(x, c, t, mask, r=r, attnCross=attnCross, q_seq_dur=q_seq_dur,  k_seq_dur=k_seq_dur)
             cross_attn_list.append(cross_attn)
         output = self.final_proj(x * mask)
 
@@ -122,10 +122,10 @@ class DitWrapper(nn.Module):
         self.time_fusion = FiLMLayer(hidden_channels, time_channels)
         self.block = DiTConVCrossBlock(hidden_channels, filter_channels, num_heads, kernel_size, p_dropout,
                                            gStyle_channels, phoneme_RoPE)
-    def forward(self, x, c, t, x_mask, r=None, attnCross=None, seq_dur=None):
+    def forward(self, x, c, t, x_mask, r=None, attnCross=None, q_seq_dur=None,  k_seq_dur=None):
         x = self.time_fusion(x, t) * x_mask
         # t: (b, hid_dim), x: (b, hid_dim, cut_l), mask: (b, ), c: (b, hid_dim), r: (b, hid_dim, cut_l)
-        x, cross_attn = self.block(x, c, r=r, x_mask=x_mask, attnCross=attnCross, seq_dur=seq_dur)
+        x, cross_attn = self.block(x, c, r=r, x_mask=x_mask, attnCross=attnCross, q_seq_dur=q_seq_dur,  k_seq_dur=k_seq_dur)
         return x, cross_attn
 
 class FiLMLayer(nn.Module):

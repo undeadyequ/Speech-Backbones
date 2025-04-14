@@ -2,13 +2,12 @@
 import re
 from GradTTS.text import cleaners
 from GradTTS.text.symbols import symbols
-
+from GradTTS.text.syllable import extend_phone2syl
 
 _symbol_to_id = {s: i for i, s in enumerate(symbols)}
 _id_to_symbol = {i: s for i, s in enumerate(symbols)}
 
 _curly_re = re.compile(r'(.*?)\{(.+?)\}(.*)')
-
 
 def get_arpabet(word, dictionary):
     word_arpabet = dictionary.lookup(word)
@@ -17,31 +16,27 @@ def get_arpabet(word, dictionary):
     else:
         return word
 
-
 def text_to_arpabet(text, cleaner_names=["english_cleaners"], dictionary=None):
     sequence = []
+    space = _symbols_to_sequence(' ')
     if dictionary is not None:
         clean_text = _clean_text(text, cleaner_names)
-        clean_text = [get_arpabet(w, dictionary) for w in clean_text.split(" ")]
+        clean_text = [get_arpabet(w, dictionary) for w in clean_text.split(" ")]  # [{AH I}, forest!]
         for i in range(len(clean_text)):
             t = clean_text[i]
             if t.startswith("{"):
-                sequence += t[1:-1].split(" ")
+                sequence += t[1:-1].split(" ")   # [AH, I, forest!]
             else:
-                sequence += " ".join(t)
-        return sequence
-    else:
-        return None
-
+                sequence += [s for s in t if _should_keep_symbol(s)]
+            sequence += space   # # [AH, "", I, "", forest!]
+        sequence = sequence[:-1] if sequence[-1] == space[0] else sequence
+    return sequence
 
 def phoneme_to_sequence(phonemes):
     """Converts phonemes to a sequence of IDs corresponding to the symbols in the text.
-
     Args:
         phoneme: HH ER0 K AY1 N D AH0 N D F ER1 M G L AE1 N S
-
     Returns:
-
     """
     p_ids = []
     phonemes_l = phonemes.split()
@@ -49,10 +44,10 @@ def phoneme_to_sequence(phonemes):
         p_ids += _arpabet_to_sequence(p)
     return p_ids
 
-
 def text_to_sequence(text, cleaner_names=["english_cleaners"], dictionary=None):
     '''Converts a string of text to a sequence of IDs corresponding to the symbols in the text.
 
+    Example: id of [AH, "", I, "", f, o, r, e, s, t, !]
     The text can optionally have ARPAbet sequences enclosed in curly braces embedded
     in it. For example, "Turn left on {HH AW1 S S T AH0 N} Street."
 
@@ -72,7 +67,7 @@ def text_to_sequence(text, cleaner_names=["english_cleaners"], dictionary=None):
         if not m:
             clean_text = _clean_text(text, cleaner_names)
             if dictionary is not None:
-                clean_text = [get_arpabet(w, dictionary) for w in clean_text.split(" ")]  # ?? forest! ??
+                clean_text = [get_arpabet(w, dictionary) for w in clean_text.split(" ")]
                 #print("phomeme: {}".format(clean_text))
                 for i in range(len(clean_text)):
                     t = clean_text[i]

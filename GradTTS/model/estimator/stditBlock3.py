@@ -58,7 +58,7 @@ class DiTConVCrossBlock(nn.Module):
             nn.Linear(hidden_channels, 7 * hidden_channels, bias=True)
         )
 
-    def forward(self, x, c, r=None, x_mask=None, muy_dur=None, ref_dur=None, attnCross=None, seq_dur=None):
+    def forward(self, x, c, r=None, x_mask=None, muy_dur=None, ref_dur=None, attnCross=None, q_seq_dur=None,  k_seq_dur=None):
         """
         Args:
             x : [batch_size, channel, time]
@@ -90,7 +90,7 @@ class DiTConVCrossBlock(nn.Module):
                                                                           -torch.finfo(x.dtype).max)  # 0(needtomask) -> infi, 1 -> 0
 
         r = self.rnorm(r.transpose(1, 2)).transpose(1, 2)  # (b, hid_dim, cut_l)
-        x_cross, attn_map = self.attn2(x=x, c=r, attn_mask=attn_mask_cross, seq_dur=seq_dur)   # attn_map: (b)
+        x_cross, attn_map = self.attn2(x=x, c=r, attn_mask=attn_mask_cross, q_seq_dur=q_seq_dur,  k_seq_dur=k_seq_dur)   # attn_map: (b)
 
         x = x + gate_mocha * x_cross * x_mask  # b, hid_dim, cut_l
 

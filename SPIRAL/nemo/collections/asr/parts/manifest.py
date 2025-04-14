@@ -50,7 +50,7 @@ def item_iter(
 
     Args:
         manifests_files: Either single string file or list of such -
-            manifests to yield items from.
+            manifests to yield rm_items from.
 
         parse_func: A callable function which accepts as input a single line
             of a manifest and optionally the manifest file itself,

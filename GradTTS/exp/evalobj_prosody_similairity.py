@@ -397,8 +397,8 @@ def evaluate_prosody_similarity(
                 title="Attention map in crossAttention after masking ({})".format(title_extra))
 
             """
-            attn_map_for_vis_first = [{emo: first_last[0]} for emo, first_last in emo_first_last_attn.items()]
-            attn_map_for_vis_last = [{emo: first_last[1]} for emo, first_last in emo_first_last_attn.items()]
+            attn_map_for_vis_first = [{emo: first_last[0]} for emo, first_last in emo_first_last_attn.rm_items()]
+            attn_map_for_vis_last = [{emo: first_last[1]} for emo, first_last in emo_first_last_attn.rm_items()]
             
             show_attn_map(
                 attn_map_for_vis_first,

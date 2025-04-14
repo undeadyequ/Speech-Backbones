@@ -1,4 +1,6 @@
 import sys, os, yaml, json
+from itertools import accumulate
+
 import torch
 import datetime as dt
 import numpy as np
@@ -10,11 +12,11 @@ from GradTTS.text import text_to_sequence, cmudict, text_to_arpabet
 from GradTTS.text.symbols import symbols
 
 from GradTTS.util.util_config import convert_to_generator_input
-from GradTTS.utils import intersperse
+from GradTTS.utils import intersperse, index_nointersperse
 
 cmu = cmudict.CMUDict('/home/rosen/Project/Speech-Backbones/GradTTS/resources/cmu_dictionary')
 
-def syn_speech_from_models(model1_set, model2_set, styles, synTexts, out_dir, fs_model=22050):
+def syn_speech_from_models(model1_set, model2_set, styles, synTexts, out_dir, fs_model=22050, vis_rm_wpspace=False):
     """
     1. Synthesize speech by given models_set (model_name, configs, chk_pt)
     2. save wav, txt, attention files
@@ -31,12 +33,14 @@ def syn_speech_from_models(model1_set, model2_set, styles, synTexts, out_dir, fs
     model_name2, model_config2, chk_pt2 = model2_set
     vocoder = get_vocoder()
 
+    attn_dict = {}   # for record qk_dur and phoneme for crossAttn visualization
+
     with torch.no_grad():
         for model_n, configs, chk_pt in ([model_name1, model_config1, chk_pt1], [model_name2, model_config2, chk_pt2]):
             ########## Setup Generator ##########
             preprocess_config, model_config, train_config = configs
             bone_n, config_n, input_n = model_n.split("_")
-            chk_pt = train_config["path"]["log_dir"] + "/models/" + chk_pt
+            chk_pt = train_config["path"]["log_dir"] + "models/" + chk_pt
 
             add_blank = preprocess_config["feature"]["add_blank"]
             nsymbols = len(symbols) + 1 if add_blank else len(symbols)
@@ -53,11 +57,15 @@ def syn_speech_from_models(model1_set, model2_set, styles, synTexts, out_dir, fs
                 print("synthesize:", text, model_n)
                 x = torch.LongTensor(intersperse(text_to_sequence(text, dictionary=cmu), len(symbols))).cuda()[None]
                 x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
+                melstyle_tensor_lengths = torch.LongTensor([melstyle_tensor.shape[-1]]).cuda()
+                phonemes = intersperse(text_to_arpabet(text, dictionary=cmu), "")
+
+                #syllable_indexs = text_to_syllable(text, dictionary=cmu)
 
                 # Create generator input
                 generator_input = convert_to_generator_input(
                     model_n, x, x_lengths, time_steps, temperature, stoc, spk_tensor, length_scale,
-                    emo_tensor, melstyle_tensor)
+                    emo_tensor, melstyle_tensor, melstyle_tensor_lengths)
 
                 t = dt.datetime.now()
                 out = generator.forward(**generator_input)
@@ -65,7 +73,11 @@ def syn_speech_from_models(model1_set, model2_set, styles, synTexts, out_dir, fs
                     y_enc, y_dec, attn, unet_attn = out
                     cross_attn = None  # [(t1, [[h, l_q_phoneme_80, l_k_frame_len], [...]]), (t2)]
                 else:
-                    y_enc, y_dec, attn, unet_attn, cross_attn = out  # cross_attn = [[h, t_t, t_s] * t_sel]
+                    y_enc, y_dec, attn, unet_attn, cross_attn, q_dur, k_dur = out  # cross_attn = [[h, t_t, t_s] * t_sel]
+
+                if len(phonemes) != len(q_dur.squeeze(0)) or len(phonemes)!= len(k_dur.squeeze(0)):
+                    print("Error! x, phone, q_dur, k_dur len should same: {} {} {} {}".format(len(x.squeeze(0)), len(phonemes), len(q_dur.squeeze(0)), len(k_dur.squeeze(0))))
+
 
                 # Vocoding
                 t = (dt.datetime.now() - t).total_seconds()
@@ -95,3 +107,30 @@ def syn_speech_from_models(model1_set, model2_set, styles, synTexts, out_dir, fs
                     # cross_attn = np.array(cross_attn)         # [(t1, [[h, l_q_phoneme_80, l_k_frame_len], [...]]), (t2)]
                     cross_attn = cross_attn.cpu().numpy()
                     np.save(attn_f, cross_attn)
+
+                # recorder
+                if emo not in attn_dict.keys():
+                    attn_dict[emo] = dict()
+                if model_n not in attn_dict[emo].keys():
+                    attn_dict[emo][model_n] = {
+                        "speechid": [],
+                        "phonemes": [],
+                        "q_dur": [],
+                        "k_dur": []
+                    }
+                if vis_rm_wpspace:
+                    #wp_space_index, phonemes = remove_intersperse_space(phonemes, "")
+                    syl_tart_ind = get_syllable_index(phonemes)  # [3, 5, 8]
+                    #wp_space_index, phonemes = index_nointersperse(phonemes, [""])  # w_space: 11, p_space: ""
+                    nowp_index = torch.ones(len(phonemes), dtype=bool)
+                    nowp_index[wp_space_index] = False
+                    q_dur = q_dur[nowp_index]
+                    k_dur = k_dur(nowp_index)
+
+                attn_dict[emo][model_n]["phonemes"].append(phonemes)
+                attn_dict[emo][model_n]["q_dur"].append(q_dur.squeeze(0).cpu().numpy().tolist())
+                attn_dict[emo][model_n]["k_dur"].append(k_dur.squeeze(0).cpu().numpy().tolist())
+                attn_dict[emo][model_n]["speechid"].append(speech_id)
+
+
+    return attn_dict

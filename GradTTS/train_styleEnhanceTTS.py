@@ -317,7 +317,7 @@ def train_process_cond(configs):
                     "emo_label": emo_label  # (b)
                 }
 
-                #[print(k, v.shape) for k, v in model_input.items() if torch.is_tensor(v)]
+                #[print(k, v.shape) for k, v in model_input.rm_items() if torch.is_tensor(v)]
                 dur_loss, prior_loss, diff_loss, monAttn_loss, commit_loss, vq_loss = model.compute_loss(**model_input)
 
                 #loss = sum([dur_loss, prior_loss, diff_loss, vq_loss])

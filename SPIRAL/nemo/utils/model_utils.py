@@ -61,11 +61,11 @@ class ArtifactItem:
 
 def resolve_dataset_name_from_cfg(cfg: 'DictConfig') -> str:
     """
-    Parses items of the provided sub-config to find the first potential key that
+    Parses rm_items of the provided sub-config to find the first potential key that
     resolves to an existing file or directory.
 
     # Fast-path Resolution
-    In order to handle cases where we need to resolve items that are not paths, a fastpath
+    In order to handle cases where we need to resolve rm_items that are not paths, a fastpath
     key can be provided as defined in the global `_VAL_TEST_FASTPATH_KEY`.
 
     This key can be used in two ways :
@@ -92,7 +92,7 @@ def resolve_dataset_name_from_cfg(cfg: 'DictConfig') -> str:
     ## _VAL_TEST_FASTPATH_KEY itself acts as the resolved key
 
     If this _VAL_TEST_FASTPATH_KEY does not point to another key in the config, then
-    it is assumed that the items of this key itself are used for resolution.
+    it is assumed that the rm_items of this key itself are used for resolution.
 
     Example:
     validation_ds:

@@ -219,7 +219,7 @@ class ASRAudioText(AudioText):
 
         Args:
             manifests_files: Either single string file or list of such -
-                manifests to yield items from.
+                manifests to yield rm_items from.
             *args: Args to pass to `AudioText` constructor.
             **kwargs: Kwargs to pass to `AudioText` constructor.
         """
@@ -304,7 +304,7 @@ class ASRSpeechLabel(SpeechLabel):
 
         Args:
             manifests_files: Either single string file or list of such -
-                manifests to yield items from.
+                manifests to yield rm_items from.
             *args: Args to pass to `SpeechLabel` constructor.
             **kwargs: Kwargs to pass to `SpeechLabel` constructor.
         """

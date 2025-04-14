@@ -2,19 +2,17 @@
 # interpEmoTTS_frame2binAttn_noJoint: ConditionalGradTTS
 # styleEnhancedTTS
 
-
-
-
 path:
   ckpt_path: "./output/ckpt/ESD"
   # interpEmoTTS_frame2frameAttn, interpEmoTTS_linearAttn, interpEmoTTS_frame2frameAttn_noJoint
-  log_dir: "/home/rosen/Project/Speech-Backbones/GradTTS/logs/stditCross_guideloss_codec" # for training   stditTest/stditMocha_norm
-  #log_dir: "/home/acc12642fx/project/Speech-Backbones/GradTTS/logs/interpEmoTTS_frame2binAttn_noJoint/" # for training
+  #log_dir: "/home/rosen/Project/Speech-Backbones/GradTTS/logs/stditCross_guideLoss_codec_sylRope/" # base/guideLoss   phoneRope/Null
+  log_dir: "/home/rosen/Project/Speech-Backbones/GradTTS/logs/stditCross_base_codec/" # base/guideLoss   phoneRope/Null
+
   result_path: "./output/result/ESD"
 # train
 n_epochs: 1000
-resume_epoch: 1  # 116 for linear, 65 for .._nojoint  800 for stdit
-batch_size: 64     # 64, 2
+resume_epoch: 0  # 116 for linear, 65 for .._nojoint  800 for stdit
+batch_size: 256     # 64, 2
 learning_rate: 1e-4
 seed: 37
 

@@ -4,11 +4,11 @@ import random
 
 class RandomCycler:
     """
-    Creates an internal copy of a sequence and allows access to its items in a constrained random 
-    order. For a source sequence of n items and one or several consecutive queries of a total 
-    of m items, the following guarantees hold (one implies the bk):
+    Creates an internal copy of a sequence and allows access to its rm_items in a constrained random
+    order. For a source sequence of n rm_items and one or several consecutive queries of a total
+    of m rm_items, the following guarantees hold (one implies the bk):
         - Each item will be returned between m // n and ((m - 1) // n) + 1 times.
-        - Between two appearances of the same item, there may be at most 2 * (n - 1) bk items.
+        - Between two appearances of the same item, there may be at most 2 * (n - 1) bk rm_items.
     """
     
     def __init__(self, source):

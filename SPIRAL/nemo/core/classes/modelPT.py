@@ -919,7 +919,7 @@ class ModelPT(LightningModule, Model):
             outputs: Single or nested list of tensor outputs from one or more data loaders.
 
         Returns:
-            A dictionary containing the union of all items from individual data_loaders,
+            A dictionary containing the union of all rm_items from individual data_loaders,
             along with merged logs from all data loaders.
         """
         # Case where we dont provide data loaders
@@ -1014,7 +1014,7 @@ class ModelPT(LightningModule, Model):
             outputs: Single or nested list of tensor outputs from one or more data loaders.
 
         Returns:
-            A dictionary containing the union of all items from individual data_loaders,
+            A dictionary containing the union of all rm_items from individual data_loaders,
             along with merged logs from all data loaders.
         """
         # Case where we dont provide data loaders

@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torchaudio as ta
 
-from text import text_to_sequence, cmudict, phoneme_to_sequence
+from text import text_to_sequence, cmudict, phoneme_to_sequence, text_to_arpabet
 from text.symbols import symbols
 from utils import parse_filelist, intersperse
 from model.utils import fix_len_compatibility
@@ -22,6 +22,9 @@ import sys
 sys.path.insert(0, 'hifi-gan')
 from meldataset import mel_spectrogram
 import os
+from GradTTS.text import extend_phone2syl
+
+cmu = cmudict.CMUDict('/home/rosen/Project/Speech-Backbones/GradTTS/resources/cmu_dictionary')
 
 emo_num = {
     "Angry": 0,
@@ -282,7 +285,7 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
         return facodec
 
     def get_text(self, text):
-        text_norm = text_to_sequence(text, dictionary=self.cmudict)
+        text_norm = text_to_sequence(text, dictionary=self.cmudict)  # text2id
         if self.add_blank:
             text_norm = intersperse(text_norm, len(symbols))  # add a blank token, whose id number is len(symbols)
         text_norm = torch.LongTensor(text_norm)
@@ -301,8 +304,8 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         basename, speaker, phone, text = self.filelist[index][0:4]
-        text, mel, spk = self.get_triplet(self.filelist[index])
-        item = {'y': mel, 'x': text, 'spk': spk}
+        text_id, mel, spk = self.get_triplet(self.filelist[index])
+        item = {'y': mel, 'x': text_id, 'spk': spk, "phone": phone}
 
         if self.datatype == "emo_embed":                   # iiv emb
             item["emo"] = self.get_emo(basename)
@@ -352,6 +355,8 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
             emolabel = torch.tensor([emo_num[emolabel]], dtype=torch.long)
             item["melstyle"] = melstyle   # 0 : (1, 256, L)
             item["emo_label"] = emolabel
+            item["phoneme"] = intersperse(text_to_arpabet(text, dictionary=cmu), "")  # different from phone
+
         elif self.datatype == "FACodecDur":
             melstyle = self.get_facodec_psd(basename, speaker)
             emolabel = self.metajson[self.filelist[index][0]]["emotion"]
@@ -428,14 +433,12 @@ class TextMelSpeakerEmoBatchCollate(object):
 
         y = torch.zeros((B, n_feats, y_max_length), dtype=torch.float32)
         x = torch.zeros((B, x_max_length), dtype=torch.long)
-        # emo_label
+        # initiate each item with shape
         if "emo_label" in batch[0].keys():
             if len(batch[0]["emo_label"].shape) == 1:
                 emo = torch.zeros((B,), dtype=torch.long)
             else:
                 emo = torch.zeros((B, batch[0]["emo_label"].shape[-1]), dtype=torch.float32)
-
-
         if "emo" in batch[0].keys():
             emo_emb = torch.zeros((B, batch[0]["emo"].shape[-1]), dtype=torch.float32)        # Set length of sequential dataset
         ## psd
@@ -449,10 +452,10 @@ class TextMelSpeakerEmoBatchCollate(object):
             melstyle_dim = batch[0]["melstyle"].shape[1]
             melstyles = torch.zeros((B, melstyle_dim, melstyle_max_length), dtype=torch.float32)
 
-        y_lengths, x_lengths = [], []
+        y_lengths, x_lengths, melstyle_lengths = [], [], []
         spk = []
 
-        # Append batch list data to dictionary with batch tensor
+        # assign value to batch
         for i, item in enumerate(batch):
             y_, x_, spk_ = item['y'], item['x'], item['spk']
             y_lengths.append(y_.shape[-1])
@@ -469,11 +472,9 @@ class TextMelSpeakerEmoBatchCollate(object):
                 engs[i, :eng.shape[-1]] = eng[0]
                 durs[i, :dur.shape[-1]] = dur[0]
             if "melstyle" in item.keys():
-                melstyle = item["melstyle"]
-                melstyle_lengths = []
-                melstyle_lengths.append(melstyle.shape[-1])
-                melstyles[i, :, :melstyle.shape[2]] = melstyle[0]
-                melstyle_lengths = torch.LongTensor(melstyle_lengths)
+                melstyle_ = item["melstyle"]
+                melstyle_lengths.append(melstyle_.shape[-1])
+                melstyles[i, :, :melstyle_.shape[-1]] = melstyle_[0]
             if "emo_label" in item.keys():
                 emo_ = item["emo_label"]
                 if len(emo.shape) == 2:
@@ -486,6 +487,8 @@ class TextMelSpeakerEmoBatchCollate(object):
 
         y_lengths = torch.LongTensor(y_lengths)
         x_lengths = torch.LongTensor(x_lengths)
+        melstyle_lengths = torch.LongTensor(melstyle_lengths)
+
         spk = torch.cat(spk, dim=0)
         # emo = torch.FloatTensor(emo)
 

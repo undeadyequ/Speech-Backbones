@@ -14,28 +14,40 @@ import matplotlib.pyplot as plt
 import torch
 from GradTTS.const_param import emo_num_dict
 
-
 def intersperse(lst, item):
+    """
+    *I*l*v*o*y*o*u*
+    Args:
+        lst:
+        item:
+
+    Returns:
+
+    """
     # Adds blank symbol
     result = [item] * (len(lst) * 2 + 1)
     result[1::2] = lst
     return result
 
-def index_nointersperse(lst: torch.Tensor, item):
-    return (lst != item).nonzero()[0]
+def index_nointersperse(lst: torch.Tensor, rm_items):
+    lst_rm = []
+    lst_rm_index = []
+    for item in rm_items:
+        lst_rm_index.append(lst[(lst != item).nonzero()])
+        lst_rm.extend(lst[(lst != item).nonzero()])
+    lst_rm_index = torch.unique(torch.vstack(lst_rm_index))
+    return lst_rm_index, lst_rm
 
 def parse_filelist(filelist_path, split_char="|"):
     with open(filelist_path, encoding='utf-8') as f:
         filepaths_and_text = [line.strip().split(split_char) for line in f]
     return filepaths_and_text
 
-
 def latest_checkpoint_path(dir_path, regex="grad_*.pt"):
     f_list = glob.glob(os.path.join(dir_path, regex))
     f_list.sort(key=lambda f: int("".join(filter(str.isdigit, f))))
     x = f_list[-1]
     return x
-
 
 def load_checkpoint(logdir, model, num=None):
     if num is None:
@@ -47,12 +59,10 @@ def load_checkpoint(logdir, model, num=None):
     model.load_state_dict(model_dict, strict=False)
     return model
 
-
 def save_figure_to_numpy(fig):
     data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
     data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
     return data
-
 
 def plot_tensor(tensor):
     plt.style.use('default')
@@ -65,7 +75,6 @@ def plot_tensor(tensor):
     plt.close()
     return data
 
-
 def save_plot(tensor, savepath, size=(12, 3)):
     plt.style.use('default')
     fig, ax = plt.subplots(figsize=(12, 3))
@@ -76,7 +85,6 @@ def save_plot(tensor, savepath, size=(12, 3)):
     plt.savefig(savepath)
     plt.close()
     return
-
 
 ##### For inference
 def get_emo_label(emo: str,

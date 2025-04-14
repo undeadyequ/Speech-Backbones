@@ -23,6 +23,7 @@ from GradTTS.model.utils import fix_len_compatibility
 from data import TextMelSpeakerEmoDataset, TextMelSpeakerEmoBatchCollate
 from utils import plot_tensor, save_plot
 from text.symbols import symbols
+import time
 
 emoN_emo = {
     "0": "ang",
@@ -68,7 +69,6 @@ def read_dataloder(
     f_max = int(preprocess_config["feature"]["f_max"])
     ref_type = model_config["datatype"]
     need_rm_sil = preprocess_config["need_rm_sil"]
-
 
     # dataset
     train_dataset = TextMelSpeakerEmoDataset(train_filelist_path,
@@ -140,6 +140,7 @@ def train_process_cond(configs, args):
 
     # log file
     with open(f'{log_dir}/model.log', 'a') as f:
+        f.write(time.ctime())  # 'Mon Oct 18 13:35:29 2010'
         f.write(str(model))
         f.write('Number of encoder parameters = %.2fm' % (model.encoder.nparams / 1e6))
         #f.write('Number of ref_encoder parameters = %.2fm' % (model.ref_encoder.nparams / 1e6))
@@ -169,7 +170,7 @@ def train_process_cond(configs, args):
             for j, item in enumerate(test_batch):
                 model_input = convert_item2input(
                     item, model_config["inference"], mode="test")
-                y_enc, y_dec, mas_attn, self_attns_list, cross_attns_list = model(**model_input)
+                y_enc, y_dec, mas_attn, self_attns_list, cross_attns_list, _, _ = model(**model_input)
 
                 i = "spk" + str(model_input["spk"].item()) + "_" + emoN_emo[str(model_input["emo_label"].item())] + \
                     "_" + txtN_para[str(j)]
@@ -210,7 +211,7 @@ def train_process_cond(configs, args):
                 model_input = convert_item2input(
                     batch, train_param=dict(out_size=out_size), mode="train")
 
-                #[print(k, v.shape) for k, v in model_input.items() if torch.is_tensor(v)]
+                #[print(k, v.shape) for k, v in model_input.rm_items() if torch.is_tensor(v)]
                 dur_loss, prior_loss, diff_loss, monAttn_loss, commit_loss, vq_loss = model.compute_loss(**model_input)
 
                 loss = sum([dur_loss, prior_loss, diff_loss, monAttn_loss, vq_loss])
@@ -341,7 +342,7 @@ if __name__ == "__main__":
     parser.add_argument("-hMask", "--mono_hard_mask", type=bool, default=False)
     parser.add_argument("-mMask", "--mono_mas_mask", type=bool, default=False)
     parser.add_argument("-gLoss", "--guide_loss", type=bool, default=True)
-    parser.add_argument("-pRoPE", "--phoneme_RoPE", type=bool, default=False)
+    parser.add_argument("-pRoPE", "--phoneme_RoPE", type=bool, default=True)
     parser.add_argument("-gNorm", "--global_norm", type=bool, default=False)
     parser.add_argument("-reType", "--ref_encoder_type", type=str, default="mlp")
 

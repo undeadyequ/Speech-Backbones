@@ -24,22 +24,22 @@ def extract_psd(preprocess_config, model_name1, model_name2, out_dir):
     """
     prosody_dict = dict()
     preprocessor = PreprocessorExtract(preprocess_config)
+    # Do MFA
     for i, model_n in enumerate(["reference", model_name1, model_name2]):
         ## Create output dir
         out_speech_dir = os.path.join(out_dir, model_n)  # audio_txt folder
         out_mfa_dir = os.path.join(out_dir, model_n + "_mfa")  # textgrid folder
         out_psd_dir = os.path.join(out_dir, model_n + "_psd")  # psd folder
-        ######### Do MFA  #########
         if not os.path.isdir(out_mfa_dir):
             mta_speech(out_speech_dir, out_mfa_dir)
         else:
             print("Escape mfa!")
 
+    # Do PSD extraction
     for i, model_n in enumerate(["reference", model_name1, model_name2]):
         out_speech_dir = os.path.join(out_dir, model_n)  # audio_txt folder
         speech_list = [speech for speech in os.listdir(out_speech_dir) if speech.endswith(".wav")]
         print("Do psd extraction!")
-        ######### Do PSD extraction  #########
         for speech in speech_list:
             speech_f = os.path.join(out_speech_dir, speech)
             emo_id = speech.split("_")[1]

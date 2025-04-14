@@ -47,6 +47,11 @@ styleEnhancedTTS_stditTest
 unkown
 
 
+
+stditCross_guideloss_codec_phoneRope_v1
+- only set q_dur
+
+
 epoch = 145
 
 |                                   | Quality | LocalStyleEnhance | MonoAttn                 | Unparal  | Other                                          |

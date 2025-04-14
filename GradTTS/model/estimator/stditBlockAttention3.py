@@ -88,27 +88,27 @@ class MultiHeadAttentionCross(nn.Module):
         torch.nn.init.xavier_uniform_(self.conv_k.weight)
         torch.nn.init.xavier_uniform_(self.conv_v.weight)
 
-    def forward(self, x, c, attn_mask=None, seq_dur=None):
+    def forward(self, x, c, attn_mask=None, q_seq_dur=None,  k_seq_dur=None):
         q = self.conv_q(x)
         k = self.conv_k(c)
         v = self.conv_v(c)
 
-        x, attn_map = self.attention(q, k, v, mask=attn_mask, seq_dur=seq_dur)
+        x, attn_map = self.attention(q, k, v, mask=attn_mask, q_seq_dur=q_seq_dur,  k_seq_dur=k_seq_dur)
 
         x = self.conv_o(x)
         return x, attn_map
 
-    def attention(self, query, key, value, mask=None, seq_dur=None):
+    def attention(self, query, key, value, mask=None, q_seq_dur=None,  k_seq_dur=None):
         b, d, t_s, t_t = (*key.size(), query.size(2))
         query = query.view(b, self.n_heads, self.k_channels, t_t).transpose(2, 3)
         key = key.view(b, self.n_heads, self.k_channels, t_s).transpose(2, 3)
         value = value.view(b, self.n_heads, self.k_channels, t_s).transpose(2, 3)
 
         if self.phoneme_RoPE:
-            if seq_dur is None:
+            if q_seq_dur is None or k_seq_dur is None:
                 IOError("Seq_dur should not be none when phone_rope is True")
-            query = self.query_rotary_pe(query, seq_dur=seq_dur)  # [b, n_head, t, c // n_head]
-            key = self.key_rotary_pe(key, seq_dur=None)
+            query = self.query_rotary_pe(query, seq_dur=q_seq_dur)  # [b, n_head, t, c // n_head]
+            key = self.key_rotary_pe(key, seq_dur=k_seq_dur)
         else:
             query = self.query_rotary_pe(query)  # [b, n_head, t, c // n_head]
             key = self.key_rotary_pe(key)

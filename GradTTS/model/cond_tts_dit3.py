@@ -16,14 +16,14 @@ from GradTTS.model.encoder.text_encoder import TextEncoder
 from GradTTS.model.diffusion import Mish
 from GradTTS.model.cond_diffusion3 import CondDiffusion
 
-from GradTTS.model.utils import (sequence_dur, sequence_mask, generate_path, duration_loss,
+from GradTTS.model.utils import (sequence_dur, scale_dur, sequence_mask, generate_path, duration_loss,
                                  fix_len_compatibility, align, get_diag_from_dur2, align_a2b_padcut,
                                  cut_pad_start_end)
 from GradTTS.modules.vqpe import VQProsodyEncoder
 from GradTTS.model.guided_loss import GuidedAttentionLoss
 from GradTTS.model.utils import search_ma
 from GradTTS.utils import index_nointersperse, plot_tensor, save_plot
-from GradTTS.text import symbols
+from GradTTS.text import symbols, extend_phone2syl
 from GradTTS.model.utils import generate_diagal_fromMask
 from GradTTS.model.encoder.ref_encoder import TVEncoder
 
@@ -49,7 +49,8 @@ class CondGradTTSDIT3(BaseModule):
                  text_encoder_config=None,
                  ref_encoder_config=None,
                  decoder_config=None,
-                 chunksize=50
+                 chunksize=50,
+                 phoneRope_syl_level=True
                  ):
         super(CondGradTTSDIT3, self).__init__()
         # shared parameter
@@ -69,6 +70,7 @@ class CondGradTTSDIT3(BaseModule):
         self.ref_encoder_type = ref_encoder_type
         self.global_norm = global_norm
         self.chunksize = chunksize
+        self.phoneRope_syl_level = phoneRope_syl_level
 
         # fine-ad
 
@@ -101,6 +103,7 @@ class CondGradTTSDIT3(BaseModule):
         self.encoder = TextEncoder(**text_encoder_config_ext)
 
         # Decoder
+        print(decoder_config_ext)
         self.decoder = CondDiffusion(**decoder_config_ext)
         if self.guide_loss:
             self.guided_attn = GuidedAttentionLoss(sigma=0.1, alpha=1.0)
@@ -149,7 +152,8 @@ class CondGradTTSDIT3(BaseModule):
                 melstyle=None,
                 melstyle_lengths=None,
                 guidence_strength=3.0,
-                seed=1
+                seed=1,
+                phoneme=None
                 ):
         """
 
@@ -191,15 +195,20 @@ class CondGradTTSDIT3(BaseModule):
         encoder_outputs = mu_y[:, :, :y_max_length]
 
         # compute gd duration
-        if self.phoneme_RoPE:
-            dur = torch.sum(attn, -1).squeeze(1)             # (b, 1, mu_x_len, mu_y_len) -> (b, mu_x_len)
-            seq_dur = sequence_dur(dur, y_mask.squeeze(1))     # (b, 1, mu_x_len) -> (b, 1, mu_y_len)
-        else:
-            seq_dur = None
+        p_dur = torch.sum(attn, -1).squeeze(1)  # (b, 1, mu_x_len, mu_y_len) -> (b, mu_x_len)
+        k_dur = scale_dur(p_dur, melstyle_lengths)  # (b, 1, melstyle_len)
 
+        if self.phoneme_RoPE:
+            syl_start = extend_phone2syl(phoneme, p_dur) if self.phoneRope_syl_level else None
+            q_seq_dur = sequence_dur(p_dur, y_mask.squeeze(1), syl_start)  # (b, 1, mu_x_len) -> (b, 1, mu_y_len)
+            k_seq_dur = sequence_dur(k_dur, sequence_mask(melstyle_lengths).long()) # ???Only used for parallel data (unpara need extra input k_dur)
+        else:
+            q_seq_dur = None
+            k_seq_dur = None
 
         # Get sample latent representation from terminal distribution N(mu_y, I)
         variance = torch.randn_like(mu_y, device=mu_y.device) / temperature
+        print(variance[0,0,0:30])
         z = mu_y + variance
 
         attnCross_mask = y_mask.repeat(1, melstyle.shape[2], 1).transpose(1, 2)   # !! strange ||
@@ -213,10 +222,13 @@ class CondGradTTSDIT3(BaseModule):
             melstyle=melstyle,
             emo_label=emo_label,
             attn_mask=attnCross_mask,
-            seq_dur=seq_dur
+            q_seq_dur=q_seq_dur,
+            k_seq_dur=k_seq_dur
         )
+
         decoder_outputs = decoder_outputs[:, :, :y_max_length]
-        return encoder_outputs, decoder_outputs, attn[:, :, :y_max_length], self_attns_list, cross_attns_list
+        return (encoder_outputs, decoder_outputs, attn[:, :, :y_max_length], self_attns_list, cross_attns_list,
+                p_dur, k_dur)
     
     def compute_loss(self,
                      x,
@@ -229,7 +241,8 @@ class CondGradTTSDIT3(BaseModule):
                      psd=None,
                      melstyle=None,
                      melstyle_lengths=None,
-                     emo_label=None
+                     emo_label=None,
+                     phoneme=None
                      ):
         """
         Computes 3 losses:
@@ -285,10 +298,15 @@ class CondGradTTSDIT3(BaseModule):
 
         # compute gd duration
         if self.phoneme_RoPE:
-            dur = torch.sum(attn, -1)             # (b, mu_x_len, mu_y_len) -> (b, mu_x_len)
-            seq_dur = sequence_dur(dur, y_mask.squeeze(1)).unsqueeze(1)     # (b, mu_x_len) -> (b, 1, mu_y_len)
+            p_dur = torch.sum(attn, -1)             # (b, mu_x_len, mu_y_len) -> (b, mu_x_len)
+            syl_start = extend_phone2syl(phoneme, p_dur) if self.phoneRope_syl_level else None
+            k_dur = scale_dur(p_dur, melstyle_lengths).unsqueeze(1)
+
+            q_seq_dur = sequence_dur(p_dur, y_mask.squeeze(1), syl_start).unsqueeze(1)     # (b, mu_x_len) -> (b, 1, mu_y_len)
+            k_seq_dur = sequence_dur(k_dur, sequence_mask(melstyle_lengths).long())
         else:
-            seq_dur = None
+            q_seq_dur = None
+            k_seq_dur = None
 
         # Align melstyle to mu_y for cut
         if melstyle.shape[2] != y.shape[2]:
@@ -296,14 +314,15 @@ class CondGradTTSDIT3(BaseModule):
             melstyle = align_a2b_padcut(melstyle, y.shape[-1], pad_value=0, pad_type="right")   # melstyle.shape[2] = y.shape[2]
 
         # Cut a small segment of mel-spectrogram (to increase batch size)
-        y, y_lengths, y_mask, melstyle_cond, attn, seq_dur = cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, out_size,
-                                                             y_dim=self.n_feats, seq_dur=seq_dur) # melstyle.shape[2] = y.shape[2]
+        y, y_lengths, y_mask, melstyle_cond, attn, q_seq_dur, k_seq_dur = cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, out_size,
+                                                             y_dim=self.n_feats, q_seq_dur=q_seq_dur, k_seq_dur=k_seq_dur) # melstyle.shape[2] = y.shape[2]
 
-        if seq_dur is not None:
-            seq_dur = seq_dur.squeeze(1)
+        if q_seq_dur is not None:
+            q_seq_dur = q_seq_dur.squeeze(1)
+            k_seq_dur = k_seq_dur.squeeze(1)
 
         # Create cross_attn mask
-        attnCross_mask = y_mask.repeat(1, melstyle_cond.shape[2], 1).transpose(1, 2)
+        attnCross_mask = y_mask.repeat(1, melstyle_cond.shape[2], 1).transpose(1, 2)  # ???
 
         # Get mu_y by attn
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2)) # attn: (b, mu_x_len, mu_y_len)
@@ -318,7 +337,8 @@ class CondGradTTSDIT3(BaseModule):
             melstyle=melstyle_cond,  # (b, mel_dim, cut_l)
             emo_label=emo_label,     # (b, )
             attnCross=attnCross_mask,
-            seq_dur=seq_dur   # (b, cut_l)
+            q_seq_dur=q_seq_dur,   # (b, cut_l),
+            k_seq_dur=k_seq_dur
         )   # attn_maps: ((b, h, l_q * d_q, l_k), (b, h, l_q * d_q, l_k))
         
         # Prior loss
@@ -395,7 +415,7 @@ def get_attnCross_mask(attnXy, attnPs=None, p_style_dur=None):
     return attnYs_space_rm
 
 
-def cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, cut_size, y_dim=80, seq_dur=None):
+def cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, cut_size, y_dim=80, q_seq_dur=None, k_seq_dur=None):
     """
     cut off inputs for larger batches
     Returns:
@@ -418,11 +438,14 @@ def cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, cut_size, y_dim=80, seq_
         y_cut_lengths = []
         melstyle_lengths = []
 
-        if seq_dur is not None:
-            seq_dur_cut = torch.zeros(seq_dur.shape[0], seq_dur.shape[1], cut_size,
-                                        dtype=seq_dur.dtype, device=seq_dur.device)
+        if k_seq_dur is not None:
+            q_seq_dur_cut = torch.zeros(q_seq_dur.shape[0], q_seq_dur.shape[1], cut_size,
+                                        dtype=q_seq_dur.dtype, device=q_seq_dur.device)
+            k_seq_dur_cut = torch.zeros(k_seq_dur.shape[0], k_seq_dur.shape[1], cut_size,
+                                        dtype=k_seq_dur.dtype, device=k_seq_dur.device)
+
             # assign values
-            for i, (y_, out_offset_, enc_hid_cond_, seq_dur_) in enumerate(zip(y, out_offset, melstyle, seq_dur)):
+            for i, (y_, out_offset_, enc_hid_cond_, q_seq_dur_, k_seq_dur_) in enumerate(zip(y, out_offset, melstyle, q_seq_dur, k_seq_dur)):
                 y_cut_length = cut_size + (y_lengths[i] - cut_size).clamp(None, 0)
                 y_cut_lengths.append(y_cut_length)
                 cut_lower, cut_upper = out_offset_, out_offset_ + y_cut_length
@@ -430,9 +453,13 @@ def cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, cut_size, y_dim=80, seq_
                 attn_cut[i, :, :y_cut_length] = attn[i, :, cut_lower:cut_upper]
                 melstyle_lengths.append(y_cut_length)
                 melstyle_cut[i, :, :y_cut_length] = enc_hid_cond_[:, cut_lower:cut_upper]
-                seq_dur_cut[i, :, :y_cut_length] = seq_dur_[:, cut_lower:cut_upper]
-            seq_dur = seq_dur_cut
-            seq_dur = seq_dur - torch.min(seq_dur, -1)[0].unsqueeze(1)   # Let seq_dur start from 0, instead of cut point
+                q_seq_dur_cut[i, :, :y_cut_length] = q_seq_dur_[:, cut_lower:cut_upper]
+                k_seq_dur_cut[i, :, :y_cut_length] = k_seq_dur_[:, cut_lower:cut_upper]
+            q_seq_dur = q_seq_dur_cut
+            q_seq_dur = q_seq_dur - torch.min(q_seq_dur, -1)[0].unsqueeze(1)   # Let seq_dur start from 0, instead of cut point
+            k_seq_dur = k_seq_dur_cut
+            k_seq_dur = k_seq_dur - torch.min(k_seq_dur, -1)[0].unsqueeze(1)  # Let seq_dur start from 0, instead of cut point
+
         else:
             # assign values
             for i, (y_, out_offset_, enc_hid_cond_) in enumerate(zip(y, out_offset, melstyle)):
@@ -443,7 +470,8 @@ def cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, cut_size, y_dim=80, seq_
                 attn_cut[i, :, :y_cut_length] = attn[i, :, cut_lower:cut_upper]
                 melstyle_lengths.append(y_cut_length)
                 melstyle_cut[i, :, :y_cut_length] = enc_hid_cond_[:, cut_lower:cut_upper]
-            seq_dur = None
+            q_seq_dur = None
+            k_seq_dur = None
 
         y_cut_lengths = torch.LongTensor(y_cut_lengths)
         y_cut_mask = sequence_mask(y_cut_lengths, max_length=cut_size).unsqueeze(1).to(
@@ -456,7 +484,7 @@ def cutoff_inputs(y, y_lengths, y_mask, melstyle, attn, cut_size, y_dim=80, seq_
         melstyle = melstyle_cut
         y_lengths = y_cut_lengths
 
-    return y, y_lengths, y_mask, melstyle, attn, seq_dur
+    return y, y_lengths, y_mask, melstyle, attn, q_seq_dur, k_seq_dur
 
 
 def get_cut_range_x(attn, cut_lower, cut_upper):

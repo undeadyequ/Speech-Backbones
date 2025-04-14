@@ -17,6 +17,7 @@ def fix_len_compatibility(length, num_downsamplings_in_unet=2):
 def convert_item2input(item, inference_param=dict(), train_param=dict(), mode="train"):
     if mode == "test":
         x = item['x'].to(torch.long).unsqueeze(0).cuda() # (b, p_l)
+        phoneme = item['phoneme']
         x_len = torch.LongTensor([x.shape[-1]]).cuda()
         spk = item['spk'].to(torch.long).cuda()
         emo_label = item["emo_label"].cuda()
@@ -39,6 +40,7 @@ def convert_item2input(item, inference_param=dict(), train_param=dict(), mode="t
             "melstyle": melstyle,
             "melstyle_lengths": melstyle_len,
             "emo_label": emo_label,
+            "phoneme": phoneme
         }
 
         return model_input
@@ -72,7 +74,7 @@ def convert_item2input(item, inference_param=dict(), train_param=dict(), mode="t
 
 
 def convert_to_generator_input(model_n, x, x_lengths, time_steps, temperature, stoc, spk_tensor, length_scale,
-                            emo_tensor, melstyle_tensor):
+                            emo_tensor, melstyle_tensor, melstyle_tensor_lengths):
     if "stditCross" in model_n:
         input = {
             "x": x,
@@ -85,6 +87,7 @@ def convert_to_generator_input(model_n, x, x_lengths, time_steps, temperature, s
             # "emo": torch.randn(batch, style_emb_dim),
             # "melstyle": torch.randn(batch, style_emb_dim, mel_max_len),# non-vae
             "melstyle": melstyle_tensor,
+            "melstyle_lengths": melstyle_tensor_lengths,
             "emo_label": emo_tensor
         }
     return input

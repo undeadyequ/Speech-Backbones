@@ -50,7 +50,7 @@ stditCross:
       n_heads: 4
       kernel_size: 3
       use_lsc: True
-      phoneme_RoPE: False
+      phoneme_RoPE: False  # whether phoneme/syllabel level embedding
 
 # ref_encoder options
 ref_encoder_mlp:

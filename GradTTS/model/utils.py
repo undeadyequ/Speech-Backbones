@@ -12,25 +12,78 @@ import math
 
 ###################### Mask Related #############################
 
-def sequence_dur(durs, seq_len):
+def sequence_dur(durs, seq_len, syl_start=None):
     """
-    sequence duration
+    sequence p-level duration to f-level duration in increase order
     dur:     (b, mu_x_len)
     seq_len: (b, y_len)
+    syl_start: (b, sel_len)  [[0, 2], ..., []]
     Returns
         dur_seq: (b, 1, y_len)
     Examples:
         # value = Index of phoneme,    times = nums of frame in this phoenme
-        [[1, 3, 2], [2, 4, 1]]  ->
+        [[1, 3, 2], [2, 4, 1]], [[1, 1, 1, 1, 1, 1, 0], [1, 1, 1, 1, 1, 1, 1]]  ->
         [1, 2, 2, 2, 3, 3, 0], [1, 1, 2, 2, 2, 2, 3]]
     """
+    # translate phone durs to syllable durs if needed
+    if syl_start is not None:
+        durs = phonedur2syldur(durs, syl_start)
+
     durs_seq = torch.zeros_like(seq_len, device=durs.device)
     for i, dur in enumerate(durs.int()):
-        dur_index = torch.arange(len(dur)).to(durs.device)   # dur
-        dur_repeat = torch.repeat_interleave(dur_index, dur)  # repeat each element of dur by dur times
-        durs_seq[i, :len(dur_repeat)] = dur_repeat
+        dur_index = torch.arange(len(dur)).to(durs.device)   # [1, 3, 2] -> [1, 2, 3]
+        dur_repeat = torch.repeat_interleave(dur_index, dur)  # repeat each element of dur by dur times exp: [1, 2, 3] -> [1, 2, 2, 2, 3, 3]
+        if len(dur_repeat) <= durs_seq.shape[1]:
+            durs_seq[i, :len(dur_repeat)] = dur_repeat
+        else:  # it will not be happed?
+            durs_seq[i, :] = dur_repeat[:durs_seq.shape[1]]
     return durs_seq
 
+
+def phonedur2syldur(phone_durs, syl_start_index):
+    syl_durs = []
+    phone_len = sum(phone_durs)
+    # get syllables and its duration
+    for i in range(len(syl_start_index)):
+        syl_start = syl_start_index[i]
+        if i != len(syl_start_index) - 1:
+            syl_end = syl_start_index[i + 1]
+        else:
+            syl_end = phone_len  # last syllables includes to the last phone
+        syl_durs.append(sum(phone_durs[syl_start: syl_end]))
+    return syl_durs
+
+
+def scale_dur(ref_dur, target_seq_len):
+    """
+    Extract f-level duration by scaling p-level duration of reference represents (same audio with target)
+    to the same size of target sequence
+
+    Args:
+        target_seq:     (b, melstyle_len)
+        ref_dur: (b, mu_x_len)
+    Returns:
+        target_dur: (b, 1, melstyle_len)
+    Examples:
+        (1, 2, 2), (15)  -> (3, 6, 6)
+    """
+    ref_dur_len = torch.sum(ref_dur, dim=1) * 1.0  # (b, )
+    target_dur_len = target_seq_len * 1.0   # (b, )
+    # scaling from ref_dur
+    target_p_dur = (torch.transpose(ref_dur, 0, 1) * target_dur_len / ref_dur_len).to(torch.long)  # (mu_x_len, b)
+    target_p_dur = torch.transpose(target_p_dur, 0, 1) # (b, mu_x_len)
+    target_p_dur[target_p_dur < 1] = 1  # set min to 1
+
+    # handle with mismatch of f-level dur length of summing p-level dur and given target_seq_len
+    for b in range(len(target_p_dur)):
+        if torch.sum(target_p_dur[b]) != target_dur_len[b]:
+            diffs = target_seq_len[b].long() - torch.sum(target_p_dur[b])
+            target_p_dur[b][-1] += diffs  # add different to last phoneme
+            target_p_dur[b][target_p_dur[b] < 0] = 0
+
+    #target_seq = sequence_mask(target_seq_len).long()
+    #target_dur_seq = sequence_dur(target_p_dur, target_seq)
+    return target_p_dur
 
 
 def sequence_mask(length, max_length=None):

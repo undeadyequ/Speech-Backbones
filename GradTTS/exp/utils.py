@@ -94,10 +94,13 @@ def fine_adjust_configs(bone_n, bone_option, bone2configPath, config_dir):
     train_config = yaml.load(open(
         config_dir + "/" + train_config, "r"), Loader=yaml.FullLoader)
     if bone_n == "stditCross":
-        if bone_option == "guideLoss":
+        if "guide" in bone_option:
             model_config["stditCross"]["guide_loss"] = True
             train_config["path"]["log_dir"] = train_config["path"]["log_dir"].replace("base", "guideLoss")
-        if bone_option == "":
+        if "phone" in bone_option:
+            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = True
+            train_config["path"]["log_dir"] = train_config["path"]["log_dir"][:-1] + "_phoneRope/"
+        if "qknorm" in bone_option:
             pass
     return preprocess_config, model_config, train_config
 
@@ -110,16 +113,23 @@ def copy_ref_speech(src_wavs, src_txts, dst_wavs, dst_txts):
 
 def convert_vis_psd_json(prosody_dict_json, show_txt_id=0):
     """
-    {"emo1": {"model1": {"psd1/phone": []}}} -> {"emo1": {"model1": list(psd_len)}}}
+    {"emo1": {"model1": {"psd1/phone": []}}} -> {"emo1": {"model1": list(pitch_len)}}}
     """
-    pitch_dict_for_vis = dict()  # for_vis: {"emo1": {"model1": list(psd_len)}}}
+    pitch_dict_for_vis = dict()  # for_vis: {"emo1": {"model1": list(p_len)}}}
     for emo, m_psd in prosody_dict_json.items():
         pitch_dict_for_vis[emo] = {}
         for model, psd in m_psd.items():
             if model not in pitch_dict_for_vis[emo].keys():
-                pitch_dict_for_vis[emo][model] = []
                 pitch_dict_for_vis[emo][model] = psd["pitch"][show_txt_id]
-    return pitch_dict_for_vis
+
+    energy_dict_for_vis = dict()  # {"emo1": {"model1": list(p_len)}}}
+    for emo, m_psd in prosody_dict_json.items():
+        energy_dict_for_vis[emo] = {}
+        for model, psd in m_psd.items():
+            if model not in energy_dict_for_vis[emo].keys():
+                energy_dict_for_vis[emo][model] = psd["energy"][show_txt_id]
+
+    return pitch_dict_for_vis, energy_dict_for_vis
 
 def convert_attn_json(prosody_dict_json, out_dir, show_t=0, show_b=0, show_h=0, show_txt=0):
     """
@@ -127,6 +137,7 @@ def convert_attn_json(prosody_dict_json, out_dir, show_t=0, show_b=0, show_h=0, 
     - auxiliary line given mfa duration ?
 
     """
+    batch_n = 0
     crossAttn_dict_for_vis = dict()  # {"model1": {"emo1": np.array([syn_frames, ref_frames])}}}  <- choose t and h from attn_map_dict
     crossAttn_dict_for_vis_aux = dict()  # {"model1": {"emo1": ([pdurs_nums], [p_nums])}}}
     print("4. Vis attention map given attn file")
@@ -140,9 +151,48 @@ def convert_attn_json(prosody_dict_json, out_dir, show_t=0, show_b=0, show_h=0, 
                     crossAttn_dict_for_vis[model] = {}
                 if emo not in crossAttn_dict_for_vis.keys():
                         crossAttn_dict_for_vis[model][emo] = {}
-                crossAttn_dict_for_vis[model][emo] = np.load(crossAttn_f, allow_pickle=True)[show_t, show_b, 0, show_h, ...]  # [time, block_n, batch, head, t_t, t_s]
+
+                # attn, syn_durs, syn_phones, ref_durs, ref_phones
+                crossAttn_dict_for_vis[model][emo] = (
+                    np.load(crossAttn_f, allow_pickle=True)[show_t, show_b, batch_n, show_h, ...], # [time, block_n, batch, head, t_t, t_s]
+                    prosody_dict_json[emo][model]["k_dur"][show_txt],
+                    prosody_dict_json[emo][model]["phonemes"][show_txt],
+                    prosody_dict_json[emo][model]["q_dur"][show_txt],
+                    prosody_dict_json[emo][model]["phonemes"][show_txt],
+                )
     return crossAttn_dict_for_vis
 
+
+def convert_attn_json_bk(prosody_dict_json, out_dir, show_t=0, show_b=0, show_h=0, show_txt=0):
+    """
+    For visualizing crossAttn
+    - auxiliary line given mfa duration ?
+
+    """
+    batch_n = 0
+    crossAttn_dict_for_vis = dict()  # {"model1": {"emo1": np.array([syn_frames, ref_frames])}}}  <- choose t and h from attn_map_dict
+    crossAttn_dict_for_vis_aux = dict()  # {"model1": {"emo1": ([pdurs_nums], [p_nums])}}}
+    print("4. Vis attention map given attn file")
+
+    for emo, m_psd in prosody_dict_json.items():
+        for model, psd in m_psd.items():
+            if model != "reference":
+                crossAttn_dir = os.path.join(out_dir, model + "_attn/")
+                crossAttn_f = crossAttn_dir + prosody_dict_json[emo][model]["speechid"][show_txt] + ".npy"
+                if model not in crossAttn_dict_for_vis.keys():
+                    crossAttn_dict_for_vis[model] = {}
+                if emo not in crossAttn_dict_for_vis.keys():
+                        crossAttn_dict_for_vis[model][emo] = {}
+
+                # attn, syn_durs, syn_phones, ref_durs, ref_phones
+                crossAttn_dict_for_vis[model][emo] = (
+                    np.load(crossAttn_f, allow_pickle=True)[show_t, show_b, batch_n, show_h, ...], # [time, block_n, batch, head, t_t, t_s]
+                    prosody_dict_json[emo][model]["duration"][show_txt],
+                    prosody_dict_json[emo][model]["phonemes"][show_txt],
+                    prosody_dict_json[emo]["reference"]["duration"][show_txt],
+                    prosody_dict_json[emo]["reference"]["phonemes"][show_txt],
+                )
+    return crossAttn_dict_for_vis
 
 
 def get_pitch_match_score(pitch1, pitch2):
@@ -231,7 +281,6 @@ def compute_phoneme_mcd(wav1,
                         p1_interv=(0, 1),
                         p2_interv=(0, 1),
                         ):
-
     # read wav1, wav2
     y1, sr1 = librosa.load(wav1, sr=None)
     y2, sr2 = librosa.load(wav2, sr=None)
@@ -251,6 +300,20 @@ def compute_phoneme_mcd(wav1,
 
 def convert_frameNum2second(frame_num, sr=16000, chunk_len=8000):
     return frame_num * chunk_len / sr
+
+
+############ vis related ############
+def convert_xydur_xybox(x_dur, y_dur):
+    if len(x_dur)!=len(y_dur):
+        IOError("xdur and ydur should be same length: {}, {}".format(len(x_dur), len(y_dur)))
+    xywh_list = []
+    for i, (xd, yd) in enumerate(zip(x_dur, y_dur)):
+        if i < len(x_dur)-1:
+            x, y = xd, yd
+            w, h = x_dur[i+1] - xd, y_dur[i+1] - yd
+            xywh_list.append((x, y, w, h))
+    return xywh_list
+
 
 if __name__ == '__main__':
     speech_dir = ("/home/rosen/Project/Speech-Backbones/GradTTS/logs/interpEmoTTS_frame2binAttn_noJoint/"
@@ -274,7 +337,6 @@ if __name__ == '__main__':
         p1_interv=(0, 1),
         p2_interv=(9, 1)
     )
-
     print("mcd betwenn origin and nonp2p is: {}".format(mcd_origin_nonP2P))
     print("mcd betwenn origin and p2p is: {}".format(mcd_origin_p2p))
 
