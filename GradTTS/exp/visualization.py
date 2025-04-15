@@ -7,6 +7,9 @@ from GradTTS.text import extend_phone2syl
 
 
 def vis_psd(pitch_dict_for_vis, energy_dict_for_vis, prosody_dict, out_png, txt_id, show_ref_phone_on_line=True):
+    """
+    
+    """
     rc_num = (3, 2)
     legend_mark = ("*", "v", ".")  # reference, guide, ropePhone_guide
     legend_color = ("grey", "lightblue", "blue")
@@ -49,6 +52,24 @@ def vis_psd(pitch_dict_for_vis, energy_dict_for_vis, prosody_dict, out_png, txt_
         title="Energy contour of speech synthesized on reference, emoMix, proposed ({})".format(title_extra),
         show_txt=show_ref_phone_on_line
     )
+    
+    ####### Enhancement Contour ############
+    ehnc_for_vis = {}
+    aux_range = (1, 2)
+    compare_pitch_contour(
+        ehnc,
+        rc_num,
+        legend_mark=legend_mark,
+        legend_color=legend_color,
+        legend_linestyle=legend_linestyle,
+        xy_label_sub=xy_label_sub,
+        xtickslab=syn_phones,
+        out_png=out_png.format("energy", title_extra.split(" ")[0]),
+        title="Energy contour of speech synthesized on reference, emoMix, proposed ({})".format(title_extra),
+        show_txt=show_ref_phone_on_line,
+        aux_range=aux_range,
+        
+    )
 
 def vis_crossAttn(attn_map_for_vis, prosody_dict, out_png, show_txt=0):
     # attn_map_for_vis -> {"model1": {"emo1": [np.array([syn_frames, ref_frames]), durations, phonemes] }}}
@@ -86,16 +107,14 @@ def compare_pitch_contour(
         xtickslab,
         out_png,
         title="pitch contour",
-        show_txt=True
+        show_txt=True,
+        aux_range=None
 ):
   """
   args:
     sub_leg_data_dict:
-    {subtitle:{         # e.g. emotion
-        legend: data    # e.g. model # e.g. pitch
-    }}
+    {emotion:{modelA: [1, 2, 5], modelB: [2, 3, 4]...}}
     rc_num: (2, 3)
-
     title: ""
     legend_mark: ["*", "o"]  # same len as len(subtitle.keys())  -> assert
     xy_label_sub: ("xlabel", "ylabel")
@@ -132,6 +151,10 @@ def compare_pitch_contour(
                         ha='left', rotation=5, wrap=True, c="green")
     if r == 0 and c == 0:
       axes[r, c].legend(loc="upper left", ncol=3, fontsize=fontsize, bbox_to_anchor=(-0.1, 1, 1.2, 0.2))
+      
+    if aux_range is not None:
+        for ax_x in aux_range:
+            axes[r, c].axvline(x=ax_x, color="blue", linestyle="--", linewidth=0.3)
     n += 1
   fig.delaxes(axes[2, 1])
   fig.suptitle(title)
@@ -150,8 +173,7 @@ def show_attn_map(
 ):
     """
     Args:
-    sub_data_dict:
-        {model: data}}
+    sub_data_dict:  {"emo1": {"emomodelA": [attn, syn_phone_durs, syn_phones, ref_phone_durs, ref_phones] }}}
     """
     r_num, c_num = rc_num
     fig, axes = plt.subplots(r_num, c_num, figsize=(10 * (r_num / c_num), 10))
@@ -159,7 +181,7 @@ def show_attn_map(
     fontsize = 12
     n = 0
 
-    # attn_map_for_vis -> {"model1": {"emo1": [np.array([syn_frames, ref_frames]), durations, phonemes] }}}
+    # attn_map_for_vis -> {"emo1": {"emomodelA": [attn, syn_phone_durs, syn_phones, ref_phone_durs, ref_phones] }}}
     for emo, contents in sub_data_dict.items():
         r = int(n / c_num)
         c = int(n % c_num)

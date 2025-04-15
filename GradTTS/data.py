@@ -355,7 +355,7 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
             emolabel = torch.tensor([emo_num[emolabel]], dtype=torch.long)
             item["melstyle"] = melstyle   # 0 : (1, 256, L)
             item["emo_label"] = emolabel
-            item["phoneme"] = intersperse(text_to_arpabet(text, dictionary=cmu), "")  # different from phone
+            item["syl_start"] = self.filelist[index][5]
 
         elif self.datatype == "FACodecDur":
             melstyle = self.get_facodec_psd(basename, speaker)
@@ -451,6 +451,9 @@ class TextMelSpeakerEmoBatchCollate(object):
             melstyle_max_length = max([item["melstyle"].shape[2] for item in batch])
             melstyle_dim = batch[0]["melstyle"].shape[1]
             melstyles = torch.zeros((B, melstyle_dim, melstyle_max_length), dtype=torch.float32)
+        if "syl_start" in batch[0].keys():
+            syl_starts_max_length = max([item["syl_start"].shape[0] for item in batch])
+            syl_starts = torch.zeros((B, syl_starts_max_length), dtype=torch.LongTensor)
 
         y_lengths, x_lengths, melstyle_lengths = [], [], []
         spk = []
@@ -484,6 +487,9 @@ class TextMelSpeakerEmoBatchCollate(object):
             if "emo" in item.keys():
                 emo_emb_ = item["emo"]
                 emo_emb[i, :] = emo_emb_
+            if "syl_start" in item.keys():
+                syl_starts_ = item["syl_start"]
+                syl_starts[i, :syl_starts_.shape[0]] = syl_starts_
 
         y_lengths = torch.LongTensor(y_lengths)
         x_lengths = torch.LongTensor(x_lengths)

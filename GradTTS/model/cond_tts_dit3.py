@@ -153,7 +153,7 @@ class CondGradTTSDIT3(BaseModule):
                 melstyle_lengths=None,
                 guidence_strength=3.0,
                 seed=1,
-                phoneme=None
+                syl_start=None
                 ):
         """
 
@@ -199,7 +199,7 @@ class CondGradTTSDIT3(BaseModule):
         k_dur = scale_dur(p_dur, melstyle_lengths)  # (b, 1, melstyle_len)
 
         if self.phoneme_RoPE:
-            syl_start = extend_phone2syl(phoneme, p_dur) if self.phoneRope_syl_level else None
+            syl_start = syl_start if self.phoneRope_syl_level else None
             q_seq_dur = sequence_dur(p_dur, y_mask.squeeze(1), syl_start)  # (b, 1, mu_x_len) -> (b, 1, mu_y_len)
             k_seq_dur = sequence_dur(k_dur, sequence_mask(melstyle_lengths).long()) # ???Only used for parallel data (unpara need extra input k_dur)
         else:
@@ -299,11 +299,12 @@ class CondGradTTSDIT3(BaseModule):
         # compute gd duration
         if self.phoneme_RoPE:
             p_dur = torch.sum(attn, -1)             # (b, mu_x_len, mu_y_len) -> (b, mu_x_len)
-            syl_start = extend_phone2syl(phoneme, p_dur) if self.phoneRope_syl_level else None
+            syl_start = syl_start if self.phoneRope_syl_level else None
             k_dur = scale_dur(p_dur, melstyle_lengths).unsqueeze(1)
+            syl_start_scale = scale_dur(syl_start, melstyle_lengths).unsqueeze(1)
 
             q_seq_dur = sequence_dur(p_dur, y_mask.squeeze(1), syl_start).unsqueeze(1)     # (b, mu_x_len) -> (b, 1, mu_y_len)
-            k_seq_dur = sequence_dur(k_dur, sequence_mask(melstyle_lengths).long())
+            k_seq_dur = sequence_dur(k_dur, sequence_mask(melstyle_lengths).long(), syl_start_scale)
         else:
             q_seq_dur = None
             k_seq_dur = None
