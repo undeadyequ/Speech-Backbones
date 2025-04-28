@@ -1,7 +1,7 @@
 import sys
 sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS')
 sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS/hifi-gan/')
-from GradTTS.model.maskCreation import create_p2p_mask, DiffAttnMask
+from GradTTS.model.util_maskCreation import create_p2p_mask, DiffAttnMask
 
 def test_create_p2p_mask():
     p2p_mask = create_p2p_mask(

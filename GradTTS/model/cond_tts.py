@@ -15,8 +15,10 @@ from GradTTS.model.base import BaseModule
 from GradTTS.model.encoder.text_encoder import TextEncoder
 from GradTTS.model.diffusion import Mish
 from GradTTS.model.cond_diffusion import CondDiffusion
-from GradTTS.model.utils import (sequence_mask, generate_path, duration_loss,
+from GradTTS.model.utils import (duration_loss,
                                  fix_len_compatibility, align)
+from GradTTS.model.util_mask_process import sequence_mask, generate_path
+
 
 ADD_COND_TO_ENC = True
 USE_MUY = True

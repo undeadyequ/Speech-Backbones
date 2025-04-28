@@ -13,8 +13,8 @@ sys.path.append('/home/rosen/Project/Speech-Backbones/GradTTS/hifi-gan/')
 
 from GradTTS.exp.utils import convert_vis_psd_json, convert_attn_json, copy_ref_speech, fine_adjust_configs, get_synStyle_from_file, get_synText_from_file
 from GradTTS.exp.extract_psd import extract_psd
-from GradTTS.exp.syn_speech import syn_speech_from_models
-from GradTTS.exp.visualization import vis_psd, vis_crossAttn
+from GradTTS.exp.syn_speech import syn_speech_from_models, text2id, syn_speech_from_model_enhance
+from GradTTS.exp.visualization import vis_psd, vis_crossAttn, vis_psd_enh
 from GradTTS.exp.statcz_psd import statcz_psd_mcd
 """
 meta_data
@@ -30,21 +30,34 @@ def main(
         chk_pt2: str,
         configs1: Tuple[Any, Any, Any],
         configs2: Tuple[Any, Any, Any],
-        out_dir: str = "option",
+        out_dir: str = "option",  # middle result
         vis_only: bool = True,
         vis_config: dict = {"row_col_num": (2, 3)},
         fs_model: int = 22050,
-        out_png = "result/{}_similarity_{}.png",
         start_step=1,
-        end_step=2
+        end_step=2,
 ):
+    # set output folder and out_png
+    bone_n1, fineAdjNet_n1, input_n1 = model_name1.split("_")
+    bone_n2, fineAdjNet_n2, input_n2 = model_name2.split("_")
+    if bone_n1 == bone_n2:
+        out_res_dir = out_dir + "/compare_{}_{}_VS_{}".format(bone_n1, fineAdjNet_n1, fineAdjNet_n2)   # Comparation res image/json/
+        model1_n, model2_n = fineAdjNet_n1, fineAdjNet_n2
+    else:
+        out_res_dir = out_dir + "/compare_{}_VS_{}".format(bone_n1, bone_n2)
+        model1_n, model2_n = bone_n1, bone_n2
+
+    out_png = out_res_dir + "/{}_similarity_{}.png"
+    if not os.path.isdir(out_res_dir):
+        Path(out_res_dir).mkdir(exist_ok=True, parents=True)
+
     ####### 1. Synthesize speech and save attn file #######
-    attn_dict_json = os.path.join(out_dir,
-                                     "attn_dict.json")  # {"emo1": {"model1": {"speechid/qkdur/phone0": [[], []]}}}
+    attn_dict_json = os.path.join(out_res_dir,
+                                     "attn_{}_VS_{}.json".format(model1_n, model2_n))  # {"emo1": {"model1": {"speechid/qkdur/phone0": [[], []]}}}
     if start_step <= 1 <= end_step:
         attn_dict = syn_speech_from_models([model_name1, configs1, chk_pt1],
                                [model_name2, configs2, chk_pt2],
-                               styles, synTexts, out_dir)
+                               styles, synTexts, out_dir, fs_model=fs_model)
         with open(attn_dict_json, "w", encoding="utf-8") as f:
             f.write(json.dumps(attn_dict, sort_keys=True, indent=4))
 
@@ -54,8 +67,8 @@ def main(
             Path(out_ref_dir).mkdir(exist_ok=True)
             src_wavs = [style[2] for style in styles]
             src_txts = [style[3] for style in styles]
-            dst_wavs = [f'{out_ref_dir}/spk{style[1]}_{style[0]}_txt{i}.wav' for i, style in enumerate(styles)]
-            dst_txts = [f'{out_ref_dir}/spk{style[1]}_{style[0]}_txt{i}.lab' for i, style in enumerate(styles)]
+            dst_wavs = [f'{out_ref_dir}/spk{style[1]}_{style[0]}_txt{text2id[style[3]]}.wav' for i, style in enumerate(styles)]
+            dst_txts = [f'{out_ref_dir}/spk{style[1]}_{style[0]}_txt{text2id[style[3]]}.lab' for i, style in enumerate(styles)]
             copy_ref_speech(src_wavs, src_txts, dst_wavs, dst_txts)
         else:
             print("1.1. Skip reference wav copy cause it has been Done!")
@@ -63,14 +76,15 @@ def main(
         print("1. Skip speech synthesis cause it has been Done!")
 
     ####### 2. Compute psd after mfa and save mfa/psd  #######
-    prosody_dict_json = os.path.join(out_dir, "prosody_dict.json")  # {"emo1": {"model1": {"psd/phone/speechid": [[], []]}}}
+    enh_prosody_dict_json = os.path.join(out_res_dir, "prosody_{}_VS_{}.json".format(model1_n, model2_n))  # {"emo1": {"model1": {"psd/phone/speechid": [[], []]}}}
     if start_step <= 2 <= end_step:
         # Extract psd/MCD
-        prosody_dict = extract_psd(configs1[0], model_name1, model_name2, out_dir)
-        with open(prosody_dict_json, "w", encoding="utf-8") as f:
+        preprocess_config = configs1[0]
+        prosody_dict = extract_psd(preprocess_config, model_name1, model_name2, out_dir)
+        with open(enh_prosody_dict_json, "w", encoding="utf-8") as f:
             f.write(json.dumps(prosody_dict, sort_keys=True, indent=4))
     else:
-        with open(prosody_dict_json, "r") as f:
+        with open(enh_prosody_dict_json, "r") as f:
             prosody_dict = json.load(f)
         print("2. Skip prosody extraction cause it has been done!")
 
@@ -93,13 +107,73 @@ def main(
         vis_psd(pitch_dict_for_vis, energy_dict_for_vis, prosody_dict, out_png, show_txt_id)
 
     ####### 5. Stastic psd and mc given json file  #######
-    psd_mcd_stat_res_json = os.path.join(out_dir,
-                                     "psd_mcd_dict.json")  # {"emo1": {"model1": {"psd/phone/speechid": [[], []]}}}
+    psd_mcd_stat_res_json = os.path.join(out_res_dir,
+                                         "psd_mcd_{}_VS_{}.json".format(model1_n,
+                                                                        model2_n))  # {"emo1": {"model1": {"psd/phone/speechid": [[], []]}}}
     if start_step <= 5 <= end_step:
-        psd_mcd_stat_res = statcz_psd_mcd(prosody_dict, out_dir)   # {"ang": {"modelA": [p1, e1, m1]}, "happy":{ "modelB": []]}}
+        psd_mcd_stat_res = statcz_psd_mcd(prosody_dict,
+                                          out_dir)  # {"ang": {"modelA": [p1, e1, m1]}, "happy":{ "modelB": []]}}
         with open(psd_mcd_stat_res_json, "w", encoding="utf-8") as f:
             f.write(json.dumps(psd_mcd_stat_res, sort_keys=True, indent=4))
         print(psd_mcd_stat_res)
+
+
+def main_enh(styles: List[Tuple[Any, Any, Any, Any, Any, Any]],
+        synTexts: List[str],
+        model_name1: str,
+        chk_pt1: str,
+        configs1: Tuple[Any, Any, Any],
+        out_dir: str = "option",  # middle result
+        fs_model: int = 22050,
+        start_step=1,
+        end_step=2,
+        enh_ind_syn_ref=(2, 2)):
+
+    enh_ind_name = str(enh_ind_syn_ref[0]) + "_" + str(enh_ind_syn_ref[0])
+    out_res_dir = out_dir + "/compareEnh_{}_VS_{}".format(None, enh_ind_name)
+
+    out_png = out_res_dir + "/{}_similarity_{}.png"
+    if not os.path.isdir(out_res_dir):
+        Path(out_res_dir).mkdir(exist_ok=True, parents=True)
+
+    enh_attn_dict_json = os.path.join(out_res_dir,
+                                      "attn_{}_{}_VS_{}.json".format(model_name1, None,
+                                                                         enh_ind_name))  # {"emo1": {"model1": {"speechid/qkdur/phone0": [[], []]}}}
+    enh_prosody_dict_json = os.path.join(out_res_dir,
+                                         "prosody_{}_{}_VS_{}.json".format(model_name1, None,
+                                                                                        enh_ind_name))  # {"emo1": {"model1": {"psd/phone/speechid": [[], []]}}}
+    # synthesis
+    attn_enh_dict = syn_speech_from_model_enhance([model_name1, configs1, chk_pt1], styles, synTexts, out_dir,
+                                                  fs_model=fs_model, enh_ind_syn_ref=enh_ind_syn_ref)
+    with open(enh_attn_dict_json, "w", encoding="utf-8") as f:
+        f.write(json.dumps(attn_enh_dict, sort_keys=True, indent=4))
+
+    # extract psd
+    preprocess_config = configs1[0]
+    model_name1_noenh = model_name1 + "_None"
+    model_name1_enh = model_name1 + "_" + enh_ind_name
+
+    enh_prosody_dict = extract_psd(preprocess_config, model_name1_noenh, model_name1_enh, out_dir)
+    with open(enh_prosody_dict_json, "w", encoding="utf-8") as f:
+        f.write(json.dumps(enh_prosody_dict, sort_keys=True, indent=4))
+
+    # vis_psd
+    enh_show_txt_id = 0
+    pitch_dict_for_vis, energy_dict_for_vis = convert_vis_psd_json(enh_prosody_dict,
+                                                                   enh_show_txt_id)  # for_vis: {"emo1": {"model1": list(psd_len)}}}
+    dur = 5  # temp
+    aux_range = list(range(enh_ind_syn_ref[0], enh_ind_syn_ref[0] + dur))
+    vis_psd_enh(pitch_dict_for_vis, enh_prosody_dict, out_png, enh_show_txt_id, aux_range=aux_range)
+
+    # vis attention
+    with open(enh_attn_dict_json, "r") as f:
+        enh_attn_dict = json.load(f)
+    enh_crossAttn_dict_for_vis = convert_attn_json(
+        enh_attn_dict_json, out_dir, show_t=0, show_b=0, show_h=0,
+        show_txt=0)  # {"model1": {"emo1": np.array([syn_frames, ref_frames])}}}
+    print("4. Vis attention map given attn file")
+    vis_crossAttn(enh_crossAttn_dict_for_vis, enh_attn_dict, out_png, show_txt=0)
+
 
 def add_emo(eval_style_f, meta_json, eval_style_emo_f):
     """
@@ -127,6 +201,15 @@ if __name__ == "__main__":
         - stditMocha:
         - unet: unet model
         - dit: DiT model
+        
+        
+        - stditCross_noguide_codec
+        - stditCross_guideframe_codec
+        - stditCross_guidephone_codec  # grad_200
+        - stditCross_guideSyl_codec
+        - stditCross_pguidephone_codec
+        
+        
     config (Only for stditCross)
         - base
         - qkNorm
@@ -146,14 +229,14 @@ if __name__ == "__main__":
 
     # Config
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name1", type=str, default="stditCross_guide_codec")
+    parser.add_argument("--model_name1", type=str, default="stditCross_noguide_codec")
     #parser.add_argument("--model_name2", type=str, default="stditCross_guideLoss_codec")
-    parser.add_argument("--model_name2", type=str, default="stditCross_guidephone_codec")
+    parser.add_argument("--model_name2", type=str, default="stditCross_guideframe_codec")
     parser.add_argument("--chk_pt1", type=str, default="grad_210.pt")
     parser.add_argument("--chk_pt2", type=str, default="grad_200.pt")
     parser.add_argument("--chk_pt3", type=str, default="chkpoint123.pt")
-    parser.add_argument("--evalstyle", type=str, default="data/eval50_style.txt") # evalstyle
-    parser.add_argument("--evaltxt", type=str, default="data/eval50_paratxt.txt") # evaltxt_para.txt
+    parser.add_argument("--evalstyle", type=str, default="data/eval50_style1.txt") # evalstyle
+    parser.add_argument("--evaltxt", type=str, default="data/eval50_paratxt1.txt") # evaltxt_para.txt
     parser.add_argument(
         "-p", "--preprocess_config", type=str,
         help="path to preprocess.yaml", default=config_dir + "/preprocess_stditCross.yaml")
@@ -168,7 +251,7 @@ if __name__ == "__main__":
     #add_emo(args.evalstyle, meta_json, eval_style_emo_f)   # only for initiate
 
     # bone model config
-    models_config_dict = {
+    bone2configPath = {
         "gradtts": ("preprocess_gradTTS.yaml", "model_gradTTS_v3.yaml", "train_gradTTS.yaml"),
         "gradtts_cross": ("preprocess_gradTTS.yaml", "model_gradTTS_v3.yaml", "train_gradTTS.yaml"),
         "STDit": ("preprocess_styleAlignedTTS.yaml", "model_styleAlignedTTS.yaml", "train_styleAlignedTTS.yaml"),
@@ -194,14 +277,14 @@ if __name__ == "__main__":
         "xy_label_sub": ("frame", "energy")
     }
 
-    bone_n1, config_n1, input_n1 = args.model_name1.split("_")
-    bone_n2, config_n2, input_n2 = args.model_name2.split("_")
+    bone_n1, fineAdjNet_n1, input_n1 = args.model_name1.split("_")
+    bone_n2, fineAdjNet_n2, input_n2 = args.model_name2.split("_")
 
     # fine-adjust config given bone_option, input_n
-    model1_config1 = fine_adjust_configs(bone_n1, config_n1, models_config_dict, config_dir)
-    model1_config2 = fine_adjust_configs(bone_n2, config_n2, models_config_dict, config_dir)
+    model1_config1 = fine_adjust_configs(bone_n1, fineAdjNet_n1, bone2configPath, config_dir)
+    model1_config2 = fine_adjust_configs(bone_n2, fineAdjNet_n2, bone2configPath, config_dir)
 
-    # Conts
+    # Cons
     train_file = ""
 
     # Convert input from args
@@ -212,12 +295,7 @@ if __name__ == "__main__":
     synTexts = get_synText_from_file(args.evaltxt)
 
     # OUTPUT
-    out_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/exp/result50"
-    out_res_dir = out_dir + "/compare_stditcross_rope_VS_ropeSyl"
-    out_png = out_res_dir + "/{}_similarity_{}.png"
-
-    if not os.path.isdir(out_res_dir):
-        Path(out_res_dir).mkdir(exist_ok=True, parents=True)
+    out_dir = "/home/rosen/Project/Speech-Backbones/GradTTS/exp/result5"
 
     """
     style_id = get_synText_from_file(args.evalstyle)
@@ -230,22 +308,39 @@ if __name__ == "__main__":
     text_choosed_para = [styles[-1] for styles in filepaths_and_text_choosed]
     text_choosed_unpara = []
     """
+    # main
+    if False:
+        main(
+            styles=syn_styles,
+            synTexts=synTexts,
+            model_name1=args.model_name1,
+            model_name2=args.model_name2,
+            chk_pt1=args.chk_pt1,
+            chk_pt2=args.chk_pt2,
+            configs1=model1_config1,
+            configs2=model1_config2,
+            out_dir=out_dir,
+            vis_only=True,
+            vis_config=pitch_vis_config,
+            fs_model=22050,
+            start_step=1,
+            end_step=1,
+        )
 
-    main(
-        styles=syn_styles,
-        synTexts=synTexts,
-        model_name1=args.model_name1,
-        model_name2=args.model_name2,
-        chk_pt1=args.chk_pt1,
-        chk_pt2=args.chk_pt2,
-        configs1=model1_config1,
-        configs2=model1_config2,
-        out_dir=out_dir,
-        vis_only=True,
-        vis_config=pitch_vis_config,
-        fs_model=16000,
-        out_png=out_png,
-        start_step=1,
-        end_step=1,
-    )
+    # enh
+    if True:
+        enh_ind_syn_ref = (2, 2)
+        main_enh(
+            styles=syn_styles,
+            synTexts=synTexts,
+            model_name1=args.model_name1,
+            chk_pt1=args.chk_pt1,
+            configs1=model1_config1,
+            out_dir=out_dir,
+            fs_model=22050,
+            start_step=1,
+            end_step=1,
+            enh_ind_syn_ref=enh_ind_syn_ref
+        )
+
 

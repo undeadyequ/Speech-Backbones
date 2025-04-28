@@ -7,9 +7,6 @@ from GradTTS.text import extend_phone2syl
 
 
 def vis_psd(pitch_dict_for_vis, energy_dict_for_vis, prosody_dict, out_png, txt_id, show_ref_phone_on_line=True):
-    """
-    
-    """
     rc_num = (3, 2)
     legend_mark = ("*", "v", ".")  # reference, guide, ropePhone_guide
     legend_color = ("grey", "lightblue", "blue")
@@ -52,24 +49,37 @@ def vis_psd(pitch_dict_for_vis, energy_dict_for_vis, prosody_dict, out_png, txt_
         title="Energy contour of speech synthesized on reference, emoMix, proposed ({})".format(title_extra),
         show_txt=show_ref_phone_on_line
     )
-    
-    ####### Enhancement Contour ############
-    ehnc_for_vis = {}
-    aux_range = (1, 2)
+
+
+def vis_psd_enh(pitch_dict_for_vis, prosody_dict, out_png, txt_id, show_ref_phone_on_line=True, aux_range=None):
+    rc_num = (3, 2)
+    legend_mark = ("*", "v", ".")  # reference, guide, ropePhone_guide
+    legend_color = ("grey", "lightblue", "blue")
+    legend_linestyle = ("dashed", "solid", "solid")
+    xy_label_sub = ("frame", "Hz")
+
+
+    #txt_n = len(prosody_dict["Angry"]["reference"]["phonemes"])   # should have ten
+    syn_phones = prosody_dict["Angry"]["reference"]["phonemes"][txt_id]   # syn_phones should be same for all emotion
+
+    title_extra = f"txt{txt_id}"
+    print("3.1. do pitch comaration visualization on {}".format(" ".join(
+        prosody_dict["Angry"]["reference"]["phonemes"][txt_id])))
+
     compare_pitch_contour(
-        ehnc,
+        pitch_dict_for_vis,
         rc_num,
         legend_mark=legend_mark,
         legend_color=legend_color,
         legend_linestyle=legend_linestyle,
         xy_label_sub=xy_label_sub,
         xtickslab=syn_phones,
-        out_png=out_png.format("energy", title_extra.split(" ")[0]),
+        out_png=out_png.format("enhance", title_extra.split(" ")[0]),
         title="Energy contour of speech synthesized on reference, emoMix, proposed ({})".format(title_extra),
         show_txt=show_ref_phone_on_line,
         aux_range=aux_range,
-        
     )
+
 
 def vis_crossAttn(attn_map_for_vis, prosody_dict, out_png, show_txt=0):
     # attn_map_for_vis -> {"model1": {"emo1": [np.array([syn_frames, ref_frames]), durations, phonemes] }}}

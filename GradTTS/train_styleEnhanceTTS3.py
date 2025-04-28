@@ -164,43 +164,45 @@ def train_process_cond(configs, args):
 
     iteration = 0
     for epoch in range(resume_epoch + 1, n_epochs + 1):
-        model.eval()
-        print('Synthesis...')
-        with ((torch.no_grad())):
-            for j, item in enumerate(test_batch):
-                model_input = convert_item2input(
-                    item, model_config["inference"], mode="test")
-                y_enc, y_dec, mas_attn, self_attns_list, cross_attns_list, _, _ = model(**model_input)
+        if True:
+            model.eval()
+            print('Synthesis...')
+            with ((torch.no_grad())):
+                for j, item in enumerate(test_batch):
+                    model_input = convert_item2input(
+                        item, model_config["inference"], mode="test")
+                    y_enc, y_dec, mas_attn, self_attns_list, cross_attns_list, _, _ = model(**model_input)
 
-                i = "spk" + str(model_input["spk"].item()) + "_" + emoN_emo[str(model_input["emo_label"].item())] + \
-                    "_" + txtN_para[str(j)]
-                ## encoder/dec ouput
-                logger.add_image(f'image_{i}/generated_enc',
-                                 plot_tensor(y_enc.squeeze().cpu()),
-                                 global_step=iteration, dataformats='HWC')
-                logger.add_image(f'image_{i}/generated_dec',
-                                 plot_tensor(y_dec.squeeze().cpu()),
-                                 global_step=iteration, dataformats='HWC')
-                if epoch % show_img_per_epoch == 0 or epoch == 1 or epoch == 2 or epoch == 3:
-                    save_plot(y_enc.squeeze().cpu(),
-                              f'{log_dir}/img/generated_enc_{i}_epoch{epoch}.png')
-                    save_plot(y_dec.squeeze().cpu(),
-                              f'{log_dir}/img/generated_dec_{i}_epoch{epoch}.png')
-                    if len(cross_attns_list) != 0:
-                        t1, b1, bt1, h1 = 0, 1, 0, 0  # time, block_n, batch, head
-                        t2, b2, bt2, h2 = 5, 5, 0, 0  # (0, 10, 20, 30, 40, 49), layer = 6
-                        cros_attn_00 = cross_attns_list[t1, b1, bt1, h1]
-                        cros_attn_55 = cross_attns_list[t2, b2, bt2, h2]
-                        save_plot(cros_attn_00.squeeze().cpu(),
-                                  f'{log_dir}/img/cross_attn_t0_b0_{i}_epoch{epoch}.png')
-                        save_plot(cros_attn_55.squeeze().cpu(),
-                                  f'{log_dir}/img/cross_attn_t49_b6_{i}_epoch{epoch}.png')
-                    #save_plot(show_attn.squeeze().cpu(),
-                    #          f'{log_dir}/img/alignment_bern_{i}_epoch{epoch}.png')
-                    # synthesize audio
-                    audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
-                    ## create folder if not exist
-                    write(f'{log_dir}/samples/sample_{i}_epoch{epoch}.wav', 22050, audio)
+                    i = "spk" + str(model_input["spk"].item()) + "_" + emoN_emo[str(model_input["emo_label"].item())] + \
+                        "_" + txtN_para[str(j)]
+                    ## encoder/dec ouput
+                    logger.add_image(f'image_{i}/generated_enc',
+                                     plot_tensor(y_enc.squeeze().cpu()),
+                                     global_step=iteration, dataformats='HWC')
+                    logger.add_image(f'image_{i}/generated_dec',
+                                     plot_tensor(y_dec.squeeze().cpu()),
+                                     global_step=iteration, dataformats='HWC')
+                    if epoch % show_img_per_epoch == 0 or epoch in (1, 2, 3, 4, 5):
+
+                        save_plot(y_enc.squeeze().cpu(),
+                                  f'{log_dir}/img/generated_enc_{i}_epoch{epoch}.png')
+                        save_plot(y_dec.squeeze().cpu(),
+                                  f'{log_dir}/img/generated_dec_{i}_epoch{epoch}.png')
+                        if len(cross_attns_list) != 0:
+                            t1, b1, bt1, h1 = 0, 1, 0, 0  # time, block_n, batch, head
+                            t2, b2, bt2, h2 = 5, 5, 0, 0  # (0, 10, 20, 30, 40, 49), layer = 6
+                            cros_attn_00 = cross_attns_list[t1, b1, bt1, h1]
+                            cros_attn_55 = cross_attns_list[t2, b2, bt2, h2]
+                            save_plot(cros_attn_00.squeeze().cpu(),
+                                      f'{log_dir}/img/cross_attn_t0_b0_{i}_epoch{epoch}.png')
+                            save_plot(cros_attn_55.squeeze().cpu(),
+                                      f'{log_dir}/img/cross_attn_t49_b6_{i}_epoch{epoch}.png')
+                        #save_plot(show_attn.squeeze().cpu(),
+                        #          f'{log_dir}/img/alignment_bern_{i}_epoch{epoch}.png')
+                        # synthesize audio
+                        audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
+                        ## create folder if not exist
+                        write(f'{log_dir}/samples/sample_{i}_epoch{epoch}.wav', sample_rate, audio)
 
         model.train()
         dur_losses, prior_losses, diff_losses, monAttn_losses, commit_losses, vq_losses = [], [], [], [], [], []
@@ -221,7 +223,6 @@ def train_process_cond(configs, args):
                 enc_grad_norm = torch.nn.utils.clip_grad_norm_(model.encoder.parameters(), max_norm=1)
                 dec_grad_norm = torch.nn.utils.clip_grad_norm_(model.decoder.parameters(), max_norm=1)
                 optimizer.step()
-
                 logger.add_scalar('training/encoder_grad_norm', enc_grad_norm, global_step=iteration)
                 logger.add_scalar('training/decoder_grad_norm', dec_grad_norm, global_step=iteration)
                 #log_loss((dur_loss, prior_loss, diff_loss, monAttn_loss, commit_loss, vq_loss), epoch, iteration, logger)
@@ -231,7 +232,6 @@ def train_process_cond(configs, args):
                 logger.add_scalar('training/diffusion_loss', diff_loss, global_step=iteration)
                 logger.add_scalar('training/monAttn_loss', monAttn_loss, global_step=iteration)
                 logger.add_scalar('training/vq_loss', vq_loss, global_step=iteration)
-
 
                 msg = (f'Epoch: {epoch}, iteration: {iteration} | dur_loss: {dur_loss.item()}, '
                        f'prior_loss: {prior_loss.item()}, diff_loss: {diff_loss.item()}, ')
@@ -262,7 +262,7 @@ def train_process_cond(configs, args):
 
         with open(f'{log_dir}/train.log', 'a') as f:
             f.write(msg)
-        if epoch % save_every > 0:
+        if epoch % save_every > 0 and epoch not in (1, 2, 3, 4, 5):
             continue
 
         # save ckpt
@@ -315,7 +315,7 @@ def fine_adjust_config(model_config, args):
     elif args.ref_encoder_type == "vaeGRL":
         model_config["stditCross"]["text_encoder_config"] = model_config["stditCross"]["ref_encoder_vaeGRL"]
     else:
-        print("not support ref_encoder {}".format(args.ref_encoder_type))
+        print("use default FACodec")
 
 if __name__ == "__main__":
     import argparse
@@ -341,11 +341,10 @@ if __name__ == "__main__":
     parser.add_argument("-qk", "--qk_norm", type=bool,default=False)
     parser.add_argument("-hMask", "--mono_hard_mask", type=bool, default=False)
     parser.add_argument("-mMask", "--mono_mas_mask", type=bool, default=False)
-    parser.add_argument("-gLoss", "--guide_loss", type=bool, default=True)
-    parser.add_argument("-pRoPE", "--phoneme_RoPE", type=bool, default=True)
+    parser.add_argument("-gLoss", "--guide_loss", type=str, default="psuedo")    # psuedo, p2p, s2s
+    parser.add_argument("-pRoPE", "--phoneme_RoPE", type=str, default="phone") # None, phone, syl
     parser.add_argument("-gNorm", "--global_norm", type=bool, default=False)
     parser.add_argument("-reType", "--ref_encoder_type", type=str, default="mlp")
-
     args = parser.parse_args()
 
     # Train on ESD dataset

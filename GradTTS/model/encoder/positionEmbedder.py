@@ -5,6 +5,7 @@ import torch.nn.functional as F
 class PhoneRotaryPositionalEmbeddings(nn.Module):
     """
     ## RoPE module
+    https://nn.labml.ai/transformers/rope/index.html
 
     Rotary encoding transforms pairs of features by rotating in the 2D plane.
     That is, it organizes the $d$ features as $\frac{d}{2}$ pairs.
@@ -37,7 +38,7 @@ class PhoneRotaryPositionalEmbeddings(nn.Module):
         #    return
 
         # $\Theta = {\theta_i = 10000^{-\frac{2(i-1)}{d}}, i \in [1, 2, ..., \frac{d}{2}]}$
-        theta = 1.0 / (self.base ** (torch.arange(0, self.d, 2).float() / self.d)).to(x.device)
+        theta = 1.0 / (self.base ** (torch.arange(0, self.d, 2).float() / self.d)).to(x.device)  # bd
         theta = theta.repeat(x.shape[1], 1)
 
         # Create position indexes `[0, 1, ..., seq_len - 1]`
@@ -51,8 +52,8 @@ class PhoneRotaryPositionalEmbeddings(nn.Module):
             seq_idx1 = seq_idx1.repeat(x.shape[1], 1)          # (batch_size, seq_len)
             # Calculate the product of position index and $\theta_i$
 
-        idx_theta = torch.einsum("bn,bd->bnd", seq_idx1, theta)     # (b, seq_len, dim)
-        idx_theta = idx_theta.permute(1, 0, 2)                            # (seq_len, b, dim)
+        idx_theta = torch.einsum("bn,bd->bnd", seq_idx1, theta)     # (b, seq_len, dim/2)
+        idx_theta = idx_theta.permute(1, 0, 2)                            # (seq_len, b, dim/2)
 
         #try:
         #    idx_theta = torch.einsum("n,d->nd", seq_idx1, theta)
@@ -61,7 +62,7 @@ class PhoneRotaryPositionalEmbeddings(nn.Module):
 
         # Concatenate so that for row $m$ we have
         # $[m \theta_0, m \theta_1, ..., m \theta_{\frac{d}{2}}, m \theta_0, m \theta_1, ..., m \theta_{\frac{d}{2}}]$
-        idx_theta2 = torch.cat([idx_theta, idx_theta], dim=2)   # (seq_len, dim)
+        idx_theta2 = torch.cat([idx_theta, idx_theta], dim=2)   # (seq_len, b, dim)
 
         # Cache them
         self.cos_cached = idx_theta2.cos()[:, :, None, :]            # (seq_len, b, 1, dim)
@@ -85,7 +86,7 @@ class PhoneRotaryPositionalEmbeddings(nn.Module):
         self._build_cache(x, seq_dur)
 
         # Split the features, we can choose to apply rotary embeddings only to a partial set of features.
-        x_rope, x_pass = x[..., : self.d], x[..., self.d:]
+        x_rope, x_pass = x[..., : self.d], x[..., self.d:]  # (seq, b,  h,  d)
 
         # Calculate
         # $[-x^{(\frac{d}{2} + 1)}, -x^{(\frac{d}{2} + 2)}, ..., -x^{(d)}, x^{(1)}, x^{(2)}, ..., x^{(\frac{d}{2})}]$

@@ -135,5 +135,104 @@ def test_mfa():
     args = [venv_python, 'mfa_dir.py', in_wavtxt_dir, model, out_textgrid_dir]
     subprocess.run(args)
 
+
+
+def cutoff_inputs_new(y, y_lengths, y_mask, melstyle, melstyle_lengths, attn, cut_size, y_dim=80, q_seq_dur=None, k_seq_dur=None):
+    """
+    cut y with given size, and adaptively cut melstyle with same phoneme size as cutted y.
+
+    y: (b, y_length)
+    q_seq_dur: (b, 1, mu_y_len)
+    k_seq_durk_seq_dur: (b, 1, melstyle_len)
+    cut off inputs for larger batches
+    Returns:
+        y:  ()
+        melstyle:
+    """
+    if not isinstance(cut_size, type(None)):
+        # randomly select start and end point
+        max_offset = (y_lengths - cut_size).clamp(0)
+        offset_ranges = list(zip([0] * max_offset.shape[0], max_offset.cpu().numpy()))
+        out_offset = torch.LongTensor([
+            torch.tensor(random.choice(range(start, end)) if end > start else 0)
+            for start, end in offset_ranges
+        ]).to(y_lengths)
+
+        # initiate tensor
+        attn_cut = torch.zeros(attn.shape[0], attn.shape[1], cut_size, dtype=attn.dtype, device=attn.device)
+        y_cut = torch.zeros(y.shape[0], y_dim, cut_size, dtype=y.dtype, device=y.device)
+
+        melstyle_cut = torch.zeros(melstyle.shape[0], melstyle.shape[1], melstyle.shape[2], dtype=melstyle.dtype, device=melstyle.device)
+        y_cut_lengths = []
+        melstyle_cut_lengths = []
+
+        if k_seq_dur is not None:
+            q_seq_dur_cut = torch.zeros(q_seq_dur.shape[0], q_seq_dur.shape[1], cut_size,
+                                        dtype=q_seq_dur.dtype, device=q_seq_dur.device)
+            k_seq_dur_cut = torch.zeros(k_seq_dur.shape[0], k_seq_dur.shape[1], k_seq_dur.shape[2],
+                                        dtype=k_seq_dur.dtype, device=k_seq_dur.device) # # k_seq has the same p_size (not f_size) with q_seq,
+            # Sssign values
+            melstyle_cut_len_max = 0
+            for i, (y_, out_offset_, enc_hid_cond_, q_seq_dur_, k_seq_dur_) in enumerate(
+                    zip(y, out_offset, melstyle, q_seq_dur, k_seq_dur)):
+                # cut y related
+                y_cut_length = cut_size + (y_lengths[i] - cut_size).clamp(None, 0)
+                y_cut_lengths.append(y_cut_length)
+                cut_lower, cut_upper = out_offset_, out_offset_ + y_cut_length
+                y_cut[i, :, :y_cut_length] = y_[:, cut_lower:cut_upper]
+                attn_cut[i, :, :y_cut_length] = attn[i, :, cut_lower:cut_upper]
+                q_seq_dur_cut[i, 0, :y_cut_length] = reset_start_of_tensor(q_seq_dur_[0, cut_lower:cut_upper])
+                q_seq_dur_cut[i, 0, :y_cut_length] = q_seq_dur_[0, cut_lower:cut_upper]
+
+                # cut melstyle
+                k_seq_dur_cut_, melsytyle_cut_lower, melsytyle_cut_upper = synfdur2reffdur(cut_lower, cut_upper, q_seq_dur_[0], k_seq_dur_[0])  # seq_dur is one channel
+
+                k_seq_dur_cut_ = reset_start_of_tensor(k_seq_dur_cut_)
+
+                #print("q_seq_dur_cut", q_seq_dur_cut[i])
+                #print("k_seq_dur_cut_", k_seq_dur_cut_)
+                k_seq_dur_cut_len_ = len(k_seq_dur_cut_.nonzero(as_tuple=True)[0])
+                if k_seq_dur_cut_len_ > melstyle_cut_len_max:
+                    melstyle_cut_len_max = k_seq_dur_cut_len_
+                k_seq_dur_cut[i, 0, :k_seq_dur_cut_len_] = k_seq_dur_cut_[:k_seq_dur_cut_len_]
+
+                melstyle_cut_lengths.append(k_seq_dur_cut_len_)
+                melstyle_cut[i, :, :melsytyle_cut_upper - melsytyle_cut_lower] = enc_hid_cond_[:, melsytyle_cut_lower : melsytyle_cut_upper]
+                # k_seq_dur_cut[i, :, :y_cut_length] = k_seq_dur_[:, cut_lower:cut_upper]
+
+            # Get len of nonzero values of k_seq_dur
+            k_seq_dur_cut = k_seq_dur_cut[:, :, :melstyle_cut_len_max]
+            melstyle_cut = melstyle_cut[:, :, :melstyle_cut_len_max]
+
+            q_seq_dur = q_seq_dur_cut
+            k_seq_dur = k_seq_dur_cut
+
+        else:
+            # assign values
+            for i, (y_, out_offset_, enc_hid_cond_) in enumerate(zip(y, out_offset, melstyle)):
+                y_cut_length = cut_size + (y_lengths[i] - cut_size).clamp(None, 0)
+                y_cut_lengths.append(y_cut_length)
+                cut_lower, cut_upper = out_offset_, out_offset_ + y_cut_length
+                y_cut[i, :, :y_cut_length] = y_[:, cut_lower:cut_upper]
+                attn_cut[i, :, :y_cut_length] = attn[i, :, cut_lower:cut_upper]
+                melstyle_cut_lengths.append(y_cut_length)
+                melstyle_cut[i, :, :y_cut_length] = enc_hid_cond_[:, cut_lower:cut_upper]
+            q_seq_dur = None
+            k_seq_dur = None
+
+        y_cut_lengths = torch.LongTensor(y_cut_lengths)
+        y_cut_mask = sequence_mask(y_cut_lengths, max_length=cut_size).unsqueeze(1).to(
+            y_mask)  # Set length to cut_size to enable fix length learning
+        melstyle_cut_lengths = torch.LongTensor(melstyle_cut_lengths)
+
+        attn = attn_cut
+        y = y_cut
+        y_mask = y_cut_mask
+        melstyle = melstyle_cut
+        y_lengths = y_cut_lengths
+    return y, y_lengths, y_mask, melstyle, melstyle_cut_lengths, attn, q_seq_dur, k_seq_dur
+
+
 if __name__ == '__main__':
     test_mfa()
+

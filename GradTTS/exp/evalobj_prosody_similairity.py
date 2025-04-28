@@ -24,7 +24,7 @@ from GradTTS.const_param import emo_melstyleSpk_dict, config_dir, logs_dir, mels
 from GradTTS.exp.utils import get_ref_pRange
 
 from GradTTS.exp.visualization import show_pitch_contour, show_energy_contour, compare_pitch_contour, show_attn_map
-from GradTTS.model.maskCreation import create_p2p_mask, DiffAttnMask
+from GradTTS.model.util_maskCreation import create_p2p_mask, DiffAttnMask
 
 from GradTTS.preprocessor.preprocessor_v2 import PreprocessorExtract
 import time
@@ -202,7 +202,7 @@ def evaluate_prosody_similarity(
 
     ####### 2. Compute psd and save to json  #######
     # prosody_info_dict
-    prosody_dict_json = os.path.join(out_dir, "prosody_dict.json")  # {"emo1": {"model1": {"psd1/phone": []}}}
+    prosody_dict_json = os.path.join(out_dir, "prosody_noguide_VS_guideSyl.json")  # {"emo1": {"model1": {"psd1/phone": []}}}
 
     if start_step <= 2 <= end_step:
         print("2. Compute psd and save to json!")

@@ -12,7 +12,7 @@ from GradTTS.model.utils import align, align_a2b_padcut
 import matplotlib.pyplot as plt
 from bisect import bisect
 from pathlib import Path
-from GradTTS.model.maskCreation import create_left_right_mask, create_pitch_bin_mask
+from GradTTS.model.util_maskCreation import create_left_right_mask, create_pitch_bin_mask
 from GradTTS.model.unet_2d_cond_speech import UNet2DCondSpeechModel
 
 class GradLogPEstimator2dCond(BaseModule):

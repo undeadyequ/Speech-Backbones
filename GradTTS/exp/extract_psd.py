@@ -55,6 +55,7 @@ def extract_psd(preprocess_config, model_name1, model_name2, out_dir):
                 }
             tg_path = os.path.join(
                 out_mfa_dir, "{}.TextGrid".format(os.path.basename(speech_f).split(".")[0]))
+            print(speech_f, tg_path, out_psd_dir)
             phonemes, pitch, energy, mels, duration = preprocessor.extract_pitch_energy_mel(speech_f,
                                                                                             tg_path=tg_path,
                                                                                             out_dir=out_psd_dir,

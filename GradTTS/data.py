@@ -183,7 +183,7 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
     Read Text mel, spker, and emotion
     """
     def __init__(self, filelist_path, meta_path, cmudict_path, preprocess_dir, add_blank=True,
-                 n_fft=1024, n_mels=80, sample_rate=22050,
+                 n_fft=1024, n_mels=80, sample_rate=16000,
                  hop_length=256, win_length=1024, f_min=0., f_max=8000,
                  datatype="psd", psd_gran="frame", need_rm_sil=True):
         super().__init__()
@@ -355,7 +355,7 @@ class TextMelSpeakerEmoDataset(torch.utils.data.Dataset):
             emolabel = torch.tensor([emo_num[emolabel]], dtype=torch.long)
             item["melstyle"] = melstyle   # 0 : (1, 256, L)
             item["emo_label"] = emolabel
-            item["syl_start"] = self.filelist[index][5]
+            item["syl_start"] = torch.tensor([int(i) for i in self.filelist[index][4].split(",")], dtype=torch.long).unsqueeze(0)
 
         elif self.datatype == "FACodecDur":
             melstyle = self.get_facodec_psd(basename, speaker)
@@ -424,7 +424,7 @@ class TextMelSpeakerEmoBatchCollate(object):
     Collate samples
     """
     def __call__(self, batch):
-        B = len(batch)
+        B = len(batch)  # [{"x": [], "y"}, ...]
         # x, y
         y_max_length = max([item['y'].shape[-1] for item in batch])
         y_max_length = fix_len_compatibility(y_max_length)
@@ -452,8 +452,8 @@ class TextMelSpeakerEmoBatchCollate(object):
             melstyle_dim = batch[0]["melstyle"].shape[1]
             melstyles = torch.zeros((B, melstyle_dim, melstyle_max_length), dtype=torch.float32)
         if "syl_start" in batch[0].keys():
-            syl_starts_max_length = max([item["syl_start"].shape[0] for item in batch])
-            syl_starts = torch.zeros((B, syl_starts_max_length), dtype=torch.LongTensor)
+            syl_starts_max_length = max([item["syl_start"].shape[-1] for item in batch])
+            syl_starts = torch.zeros((B, syl_starts_max_length), dtype=torch.long)
 
         y_lengths, x_lengths, melstyle_lengths = [], [], []
         spk = []
@@ -489,7 +489,7 @@ class TextMelSpeakerEmoBatchCollate(object):
                 emo_emb[i, :] = emo_emb_
             if "syl_start" in item.keys():
                 syl_starts_ = item["syl_start"]
-                syl_starts[i, :syl_starts_.shape[0]] = syl_starts_
+                syl_starts[i, :syl_starts_.shape[-1]] = syl_starts_[0]
 
         y_lengths = torch.LongTensor(y_lengths)
         x_lengths = torch.LongTensor(x_lengths)
@@ -506,7 +506,8 @@ class TextMelSpeakerEmoBatchCollate(object):
                     'spk': spk,
                     "emo_label": emo,
                     "melstyle": melstyles,
-                    "melstyle_lengths": melstyle_lengths
+                    "melstyle_lengths": melstyle_lengths,
+                    "syl_start": syl_starts
                     }
         elif "pit" in batch[0].keys():
             return {'x': x,

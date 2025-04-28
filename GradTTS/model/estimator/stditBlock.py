@@ -11,7 +11,7 @@ from scipy.constants import troy_ounce
 from GradTTS.model.estimator.stditBlockAttention import MultiHeadAttention, MultiHeadAttentionCross
 from GradTTS.model.mocha import MoChA
 from GradTTS.eval_util import get_quantile
-from GradTTS.model.utils import generate_diagal_fromMask
+from GradTTS.model.util_mask_process import generate_diagal_fromMask
 from GradTTS.model.utils import search_ma
 
 torch.set_printoptions(threshold=100000)

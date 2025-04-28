@@ -1,4 +1,4 @@
-from GradTTS.model.maskCreation import create_p2p_mask
+from GradTTS.model.util_maskCreation import create_p2p_mask
 from GradTTS.inference_cond import inference_p2p_transfer_by_attnMask
 from GradTTS.exp.utils import compute_phoneme_mcd
 

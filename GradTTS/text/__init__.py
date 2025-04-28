@@ -1,13 +1,21 @@
 """ from https://github.com/keithito/tacotron """
 import re
-from GradTTS.text import cleaners
+from GradTTS.text import cleaners, cmudict
 from GradTTS.text.symbols import symbols
-from GradTTS.text.syllable import extend_phone2syl
+from GradTTS.text.syllable import extend_phone2syl, search_syllable_index
+from GradTTS.utils import intersperse
 
 _symbol_to_id = {s: i for i, s in enumerate(symbols)}
 _id_to_symbol = {i: s for i, s in enumerate(symbols)}
 
 _curly_re = re.compile(r'(.*?)\{(.+?)\}(.*)')
+
+cmu = cmudict.CMUDict('/home/rosen/Project/Speech-Backbones/GradTTS/resources/cmu_dictionary')
+
+text2id_iterp = lambda x: intersperse(text_to_sequence(x, dictionary=cmu), len(symbols)) # for training
+text2phone_iterp = lambda x: intersperse(text_to_arpabet(x, dictionary=cmu), "")         # for visualization
+text2sylstart_interp = lambda x: search_syllable_index(text2phone_iterp(x))         # for training  and vis
+
 
 def get_arpabet(word, dictionary):
     word_arpabet = dictionary.lookup(word)

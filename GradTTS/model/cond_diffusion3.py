@@ -59,7 +59,9 @@ class CondDiffusion(BaseModule):
                 emo_label=None,
                 attn_mask=None,
                 q_seq_dur=None,
-                k_seq_dur=None
+                k_seq_dur=None,
+                refenh_ind_dur=None,
+                synenh_ind_dur=None
                 ):
         """
         Given z, mu and conditioning (emolabel, psd, spk), denoise melspectrogram by ODE or SDE solver (stoc)
@@ -92,7 +94,8 @@ class CondDiffusion(BaseModule):
 
             # t: (b, ), xt: (b, mel_dim, cut_l), mask: (b, 1, cut_l), mu: (b, mel_dim, cut_l), emo_label:(b, emo_dim), melstyle:(b, mel_dim, cut_l)
             score_emo, attn_crosses = self.estimator(
-                t=t, x=xt, mask=mask, mu=mu, c=emo_label, r=melstyle, attnCross=attn_mask, q_seq_dur=q_seq_dur,  k_seq_dur=k_seq_dur)
+                t=t, x=xt, mask=mask, mu=mu, c=emo_label, r=melstyle, attnCross=attn_mask, q_seq_dur=q_seq_dur,  k_seq_dur=k_seq_dur,
+            refenh_ind_dur=refenh_ind_dur, synenh_ind_dur=synenh_ind_dur)
             attn_selfs = None
 
             # Get dxt

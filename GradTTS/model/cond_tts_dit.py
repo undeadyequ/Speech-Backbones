@@ -14,15 +14,15 @@ from GradTTS.model.base import BaseModule
 from GradTTS.model.encoder.text_encoder import TextEncoder
 from GradTTS.model.diffusion import Mish
 from GradTTS.model.cond_diffusion2 import CondDiffusion
-from GradTTS.model.utils import (sequence_mask, generate_path, duration_loss,
-                                 fix_len_compatibility, align, get_diag_from_dur2, align_a2b_padcut, cut_pad_start_end)
+from GradTTS.model.utils import (duration_loss,
+                                 fix_len_compatibility, align, align_a2b_padcut, cut_pad_start_end)
 from GradTTS.modules.vqpe import VQProsodyEncoder
 from GradTTS.model.guided_loss import GuidedAttentionLoss
 from GradTTS.model.utils import search_ma
 from GradTTS.utils import index_nointersperse
 from GradTTS.text import symbols
-from GradTTS.model.utils import generate_diagal_fromMask
 from GradTTS.model.encoder.ref_encoder import TVEncoder
+from GradTTS.model.util_mask_process import sequence_mask, generate_path, generate_diagal_fromMask, get_diag_from_dur2
 
 ADD_COND_TO_ENC = True
 USE_MUY = True

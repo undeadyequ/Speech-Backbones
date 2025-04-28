@@ -5,7 +5,7 @@ import math
 import torch
 
 from GradTTS.model.base import BaseModule
-from GradTTS.model.utils import sequence_mask, convert_pad_shape
+from GradTTS.model.util_mask_process import sequence_mask, convert_pad_shape
 
 
 class LayerNorm(BaseModule):

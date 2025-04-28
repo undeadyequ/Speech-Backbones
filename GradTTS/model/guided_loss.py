@@ -37,6 +37,18 @@ class GuidedAttentionLoss(torch.nn.Module):
         self.masks = None
 
     def create_guide_mask(self, ilens, olens, fix_len=None, chunksize=5):
+        """
+
+        Args:
+            ilens: (b, )
+            olens: (b, )
+            fix_len:
+            chunksize: int
+        Returns:
+            guided_attn_masks (b, ilens_max, olens_max)
+            masks: (b, ilens_max, olens_max)
+        """
+
         guided_attn_masks = self._make_guided_attention_masks(ilens, olens, fix_len, chunksize).cuda()
         masks = self._make_masks(ilens, olens).cuda()
         return guided_attn_masks, masks

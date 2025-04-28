@@ -10,7 +10,7 @@ inference:
 stditCross:
   n_spks: 30    # 247 Libri-TTS 1 LJSpeech, ESD 10
   spk_emb_dim: 64
-  gStyle_dim: 5   #
+  gStyle_dim: 5    #
   gStyle_out: 80   #
   n_feats: 80
   dec_dim: 64
@@ -42,7 +42,7 @@ stditCross:
       noise_channels: 80
       cond_channels: 80
       crossCond_channels: 80
-      hidden_channels: 256
+      hidden_channels: 256    #
       out_channels: 80
       filter_channels: 1024   # FFN in block
       dropout: 0.1
@@ -50,7 +50,7 @@ stditCross:
       n_heads: 4
       kernel_size: 3
       use_lsc: True
-      phoneme_RoPE: False  # whether phoneme/syllabel level embedding
+      phoneme_RoPE: "phone"  # whether phoneme/syllabel level embedding
 
 # ref_encoder options
 ref_encoder_mlp:

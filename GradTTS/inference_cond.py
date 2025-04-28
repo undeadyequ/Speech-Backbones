@@ -28,7 +28,7 @@ from pathlib import Path
 from model import GradTTS, CondGradTTS, CondGradTTSLDM
 import yaml
 from utils import get_emo_label
-from model.maskCreation import create_p2p_mask, DiffAttnMask
+from model.util_maskCreation import create_p2p_mask, DiffAttnMask
 from GradTTS.exp.utils import get_ref_pRange, get_tgt_pRange
 from GradTTS.data import get_mel
 from GradTTS.utils import parse_filelist

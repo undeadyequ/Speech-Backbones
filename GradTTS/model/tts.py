@@ -14,7 +14,8 @@ import torch
 from GradTTS.model.base import BaseModule
 from GradTTS.model.encoder.text_encoder import TextEncoder
 from GradTTS.model.diffusion import Diffusion
-from GradTTS.model.utils import sequence_mask, generate_path, duration_loss, fix_len_compatibility
+from GradTTS.model.utils import duration_loss, fix_len_compatibility
+from GradTTS.model.util_mask_process import sequence_mask, generate_path
 
 
 class GradTTS(BaseModule):

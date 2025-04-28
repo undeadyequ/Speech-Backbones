@@ -6,7 +6,6 @@ need_rm_sil: True
 computer_path1: "rosen/Project"
 computer_path2: "acc12642fx/project"
 
-
 path:
   # Original embedding
   corpus_path: "/home/rosen/Project/FastSpeech2/ESD"
@@ -28,8 +27,8 @@ path:
   pitch: "pitch"
   energy: "energy"
   duration: "duration"
-  index_train_f: "train.txt"    # "train.txt", "train_selected.txt"
-  index_val_f: "val_selected.txt"  # "val.txt"
+  index_train_f: "train_syl.txt"    # "train.txt", "train_selected.txt", "train_syl.txt"
+  index_val_f: "val_selected_syl.txt"  # "val.txt", "val_selected_syl.txt"
 
   # bk
   cmudict_path: 'resources/cmu_dictionary'
@@ -39,7 +38,7 @@ feature:
   n_feats: 80
   n_spks: 247    # 247 for Libri-TTS filelist and 1 for LJSpeech
   n_fft: 1024
-  sample_rate: 16000
+  sample_rate: 22050
   hop_length: 256
   win_length: 1024
   f_min: 0

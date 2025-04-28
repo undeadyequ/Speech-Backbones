@@ -27,8 +27,10 @@ def extend_phone2syl(phones, phone_durs, syl_start_index=None):
         syls.append(" ".join(phones[syl_start : syl_end]))
     return syls, syl_durs
 
+
 def search_syllable_index(phones):
     """
+    phone must include space (11) and interval ("")
     Args:
         phones:  ["", "AH", "", "B", "11", "", "G"]   #  w_space: 11, p_space: ""
 

@@ -53,7 +53,9 @@ def get_synText_from_file(synText_f):
     return texts
 
 
-def get_synStyle_from_file(synStyle_f, split_char="|", melstyle_type="codec",
+def get_synStyle_from_file(synStyle_f,
+                           split_char="|",
+                           melstyle_type="codec",
                            wav_dir=wav_dir,
                            psd_quants_dir=psd_quants_dir,
                            melstyle_dir=melstyle_dir):
@@ -66,17 +68,32 @@ def get_synStyle_from_file(synStyle_f, split_char="|", melstyle_type="codec",
     """
     styles = []
     syn_styles = parse_filelist(synStyle_f, split_char=split_char)  # emotion changed
-    for speechid, spk, phoneme, txt, emo in syn_styles:
-        spk = int(spk[2:])
-        wav_n = os.path.join(wav_dir, speechid + ".wav")
-        emo_tensor = get_emo_label(emo, emo_num_dict, emo_type="index")
-        spk_tensor = torch.LongTensor([spk]).cuda()
-        if melstyle_type == "codec":
-            melstyle_tensor = torch.from_numpy(np.load(psd_quants_dir + "/" + speechid + ".npy")).cuda()
-        else:
-            melstyle_tensor = torch.from_numpy(np.load(melstyle_dir + "/" + speechid + ".npy")).cuda()
-            melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
-        styles.append((emo, spk, wav_n, txt, emo_tensor, melstyle_tensor, spk_tensor))
+
+    if len(syn_styles[0]) == 5:
+        for speechid, spk, phoneme, txt, emo in syn_styles:
+            spk = int(spk[2:])
+            wav_n = os.path.join(wav_dir, speechid + ".wav")
+            emo_tensor = get_emo_label(emo, emo_num_dict, emo_type="index")
+            spk_tensor = torch.LongTensor([spk]).cuda()
+            if melstyle_type == "codec":
+                melstyle_tensor = torch.from_numpy(np.load(psd_quants_dir + "/" + speechid + ".npy")).cuda()
+            else:
+                melstyle_tensor = torch.from_numpy(np.load(melstyle_dir + "/" + speechid + ".npy")).cuda()
+                melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
+            styles.append((emo, spk, wav_n, txt, emo_tensor, melstyle_tensor, spk_tensor))
+    elif len(syn_styles[0]) == 6:
+        for speechid, spk, phoneme, txt, syl_start, emo in syn_styles:
+            spk = int(spk[2:])
+            wav_n = os.path.join(wav_dir, speechid + ".wav")
+            emo_tensor = get_emo_label(emo, emo_num_dict, emo_type="index")
+            spk_tensor = torch.LongTensor([spk]).cuda()
+            if melstyle_type == "codec":
+                melstyle_tensor = torch.from_numpy(np.load(psd_quants_dir + "/" + speechid + ".npy")).cuda()
+            else:
+                melstyle_tensor = torch.from_numpy(np.load(melstyle_dir + "/" + speechid + ".npy")).cuda()
+                melstyle_tensor = melstyle_tensor.unsqueeze(0).transpose(1, 2)
+            syl_start = torch.tensor([int(i) for i in syl_start.split(",")], dtype=torch.long).unsqueeze(0)
+            styles.append((emo, spk, wav_n, txt, emo_tensor, melstyle_tensor, spk_tensor, syl_start))
     return styles
 
 
@@ -86,6 +103,7 @@ def fine_adjust_configs(bone_n, bone_option, bone2configPath, config_dir):
     Returns:
 
     """
+    log_dir_base = "/home/rosen/Project/Speech-Backbones/GradTTS/logs/{}/"
     preprocess, model_config, train_config = bone2configPath[bone_n]
     preprocess_config = yaml.load(
         open(config_dir + "/" + preprocess, "r"), Loader=yaml.FullLoader)
@@ -94,14 +112,21 @@ def fine_adjust_configs(bone_n, bone_option, bone2configPath, config_dir):
     train_config = yaml.load(open(
         config_dir + "/" + train_config, "r"), Loader=yaml.FullLoader)
     if bone_n == "stditCross":
-        if "guide" in bone_option:
+        if bone_option == "noguide":
+            model_config["stditCross"]["guide_loss"] = False
+            train_config["path"]["log_dir"] = log_dir_base.format("stditCross_base_codec")
+        elif bone_option == "guideframe":
             model_config["stditCross"]["guide_loss"] = True
-            train_config["path"]["log_dir"] = train_config["path"]["log_dir"].replace("base", "guideLoss")
-        if "phone" in bone_option:
             model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = True
-            train_config["path"]["log_dir"] = train_config["path"]["log_dir"][:-1] + "_phoneRope/"
-        if "qknorm" in bone_option:
-            pass
+            train_config["path"]["log_dir"] = log_dir_base.format("stditCross_guideLoss_codec")
+        elif bone_option == "guidephone":
+            model_config["stditCross"]["guide_loss"] = True
+            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = True
+            train_config["path"]["log_dir"] = log_dir_base.format("stditCross_guideLoss_codec_phoneRope")
+        elif bone_option == "guideSyl":
+            model_config["stditCross"]["guide_loss"] = True
+            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = True
+            train_config["path"]["log_dir"] = log_dir_base.format("stditCross_guideLoss_codec_sylRope")
     return preprocess_config, model_config, train_config
 
 def copy_ref_speech(src_wavs, src_txts, dst_wavs, dst_txts):
