@@ -28,6 +28,48 @@ from GradTTS.utils import parse_filelist, intersperse, get_emo_label
 def convert_style2json(style_id):
     pass
 
+
+def combine_jsons(attn_model1_json, attn_model2_json, combined_model12_json):
+    """
+    combine two jsons
+    Args:
+        attn_model1_json (_type_): _description_
+        attn_model2_json (_type_): _description_
+        combined_model12_json (_type_): _description_
+    """
+    with open(attn_model1_json, 'r') as f:
+        attn_model1 = json.load(f)
+    with open(attn_model2_json, 'r') as f:
+        attn_model2 = json.load(f)
+    
+    combined_dict = attn_model1.copy()
+    
+    for spk, emo_model_dict in attn_model2.items():    
+        for emo, model_dict in emo_model_dict.items(): 
+            for model, psd_dict in model_dict.items():
+                if model not in combined_dict[spk][emo].keys():
+                    combined_dict[spk][emo][model] = attn_model2[spk][emo][model]
+    
+    with open(combined_model12_json, 'w') as f:
+        json.dump(combined_dict, f, indent=4)
+
+
+def renew_dict(current_dict, old_dict):
+    """ renew old dict with current dict (Only add model subdirectory of old dict when it is not in current dict ) 
+    Args:
+        current_dict (_type_): {"speaker": {"emo1": {"model1": {"speechid/qkdur/phone0": [[],[]]}}}}
+        old_dict (_type_): {"speaker": {"emo1": {"model1": {"speechid/qkdur/phone0": [[],[]]}}}}
+    Returns:
+        _type_: _description_
+    """
+    new_dict = current_dict.copy()
+    for spk, emo_model_dict in old_dict.items():    
+        for emo, model_dict in emo_model_dict.items(): 
+            for model, psd_dict in model_dict.items():
+                if model not in new_dict[spk][emo].keys():
+                    new_dict[spk][emo][model] = old_dict[spk][emo][model]
+    return new_dict
+
 def get_styles_wavs_from_dict(style_dict, emo_type="index", emo_num=5):
     styles = []
     for emo, mel_spk in style_dict.items():
@@ -112,21 +154,26 @@ def fine_adjust_configs(bone_n, bone_option, bone2configPath, config_dir):
     train_config = yaml.load(open(
         config_dir + "/" + train_config, "r"), Loader=yaml.FullLoader)
     if bone_n == "stditCross":
-        if bone_option == "noguide":
+        if bone_option == "noguide" or bone_option == "base":
             model_config["stditCross"]["guide_loss"] = False
+            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = "frame"
             train_config["path"]["log_dir"] = log_dir_base.format("stditCross_base_codec")
         elif bone_option == "guideframe":
             model_config["stditCross"]["guide_loss"] = True
-            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = True
+            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = "frame"
             train_config["path"]["log_dir"] = log_dir_base.format("stditCross_guideLoss_codec")
         elif bone_option == "guidephone":
             model_config["stditCross"]["guide_loss"] = True
-            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = True
+            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = "phone"
             train_config["path"]["log_dir"] = log_dir_base.format("stditCross_guideLoss_codec_phoneRope")
         elif bone_option == "guideSyl":
             model_config["stditCross"]["guide_loss"] = True
-            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = True
+            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = "sel"
             train_config["path"]["log_dir"] = log_dir_base.format("stditCross_guideLoss_codec_sylRope")
+        elif bone_option == "pguidephone":
+            model_config["stditCross"]["guide_loss"] = True
+            model_config["stditCross"]["decoder_config"]["stdit_config"]["phoneme_RoPE"] = "phone"
+            train_config["path"]["log_dir"] = log_dir_base.format("stditCross_pguidephone_codec")
     return preprocess_config, model_config, train_config
 
 def copy_ref_speech(src_wavs, src_txts, dst_wavs, dst_txts):
@@ -145,18 +192,20 @@ def convert_vis_psd_json(prosody_dict_json, show_txt_id=0):
         pitch_dict_for_vis[emo] = {}
         for model, psd in m_psd.items():
             if model not in pitch_dict_for_vis[emo].keys():
-                pitch_dict_for_vis[emo][model] = psd["pitch"][show_txt_id]
+                real_text_id = max([i if txt_name[-1] == str(show_txt_id) else -1 for i, txt_name in enumerate(psd["speechid"])])   # psd["pitch"] is not sorted
+                pitch_dict_for_vis[emo][model] = psd["pitch"][real_text_id]
 
     energy_dict_for_vis = dict()  # {"emo1": {"model1": list(p_len)}}}
     for emo, m_psd in prosody_dict_json.items():
         energy_dict_for_vis[emo] = {}
         for model, psd in m_psd.items():
             if model not in energy_dict_for_vis[emo].keys():
-                energy_dict_for_vis[emo][model] = psd["energy"][show_txt_id]
+                real_text_id = max([i if txt_name[-1] == str(show_txt_id) else -1 for i, txt_name in enumerate(psd["speechid"])])   # psd["pitch"] is not sorted
+                energy_dict_for_vis[emo][model] = psd["energy"][real_text_id]
 
     return pitch_dict_for_vis, energy_dict_for_vis
 
-def convert_attn_json(prosody_dict_json, out_dir, show_t=0, show_b=0, show_h=0, show_txt=0):
+def convert_attn_json(attn_dict_json, attn_dir, show_t=0, show_b=0, show_h=0, show_txt=0):
     """
     For visualizing crossAttn
     - auxiliary line given mfa duration ?
@@ -164,27 +213,51 @@ def convert_attn_json(prosody_dict_json, out_dir, show_t=0, show_b=0, show_h=0, 
     """
     batch_n = 0
     crossAttn_dict_for_vis = dict()  # {"model1": {"emo1": np.array([syn_frames, ref_frames])}}}  <- choose t and h from attn_map_dict
-    crossAttn_dict_for_vis_aux = dict()  # {"model1": {"emo1": ([pdurs_nums], [p_nums])}}}
-    print("4. Vis attention map given attn file")
-
-    for emo, m_psd in prosody_dict_json.items():
+    for emo, m_psd in attn_dict_json.items():
         for model, psd in m_psd.items():
             if model != "reference":
-                crossAttn_dir = os.path.join(out_dir, model + "_attn/")
-                crossAttn_f = crossAttn_dir + prosody_dict_json[emo][model]["speechid"][show_txt] + ".npy"
+                crossAttn_dir = os.path.join(attn_dir, model + "_attn/")
+                crossAttn_f = crossAttn_dir + attn_dict_json[emo][model]["speechid"][show_txt] + ".npy"
                 if model not in crossAttn_dict_for_vis.keys():
                     crossAttn_dict_for_vis[model] = {}
                 if emo not in crossAttn_dict_for_vis.keys():
                         crossAttn_dict_for_vis[model][emo] = {}
 
                 # attn, syn_durs, syn_phones, ref_durs, ref_phones
+
                 crossAttn_dict_for_vis[model][emo] = (
                     np.load(crossAttn_f, allow_pickle=True)[show_t, show_b, batch_n, show_h, ...], # [time, block_n, batch, head, t_t, t_s]
-                    prosody_dict_json[emo][model]["k_dur"][show_txt],
-                    prosody_dict_json[emo][model]["phonemes"][show_txt],
-                    prosody_dict_json[emo][model]["q_dur"][show_txt],
-                    prosody_dict_json[emo][model]["phonemes"][show_txt],
+                    attn_dict_json[emo][model]["k_dur"][show_txt],
+                    attn_dict_json[emo][model]["phonemes"][show_txt],
+                    attn_dict_json[emo][model]["q_dur"][show_txt],
+                    attn_dict_json[emo][model]["phonemes"][show_txt].copy(),  ## Tempt
                 )
+    return crossAttn_dict_for_vis
+
+
+def convert_attnEnh_json(attn_dict_json, attn_dir, show_t=0, show_b=0, show_h=0, show_txt=0):
+    """
+    For visualizing crossAttn
+    - auxiliary line given mfa duration ?
+
+    """
+    batch_n = 0
+    crossAttn_dict_for_vis = dict()  # {"model1": {"emo1": np.array([syn_frames, ref_frames])}}}  <- choose t and h from attn_map_dict
+    for model, psd in attn_dict_json.items():
+        if model != "reference":
+            crossAttn_dir = os.path.join(attn_dir, model + "_attn/")
+            crossAttn_f = crossAttn_dir + attn_dict_json[model]["speechid"][show_txt] + ".npy"
+            if model not in crossAttn_dict_for_vis.keys():
+                crossAttn_dict_for_vis[model] = {}
+            # attn, syn_durs, syn_phones, ref_durs, ref_phones
+
+            crossAttn_dict_for_vis[model] = (
+                np.load(crossAttn_f, allow_pickle=True)[show_t, show_b, batch_n, show_h, ...], # [time, block_n, batch, head, t_t, t_s]
+                attn_dict_json[model]["k_dur"][show_txt],
+                attn_dict_json[model]["phonemes"][show_txt],
+                attn_dict_json[model]["q_dur"][show_txt],
+                attn_dict_json[model]["phonemes"][show_txt].copy(),  ## Tempt
+            )
     return crossAttn_dict_for_vis
 
 
@@ -339,6 +412,22 @@ def convert_xydur_xybox(x_dur, y_dur):
             xywh_list.append((x, y, w, h))
     return xywh_list
 
+def clean_phone(phone, phone_durs):
+    """
+    remove "" and 11, append their dur to latter phoneme
+    Args:
+        phones: ["", "AH", "", 11, "", "B", "", "AH0", "", "IH, "", 11, "", "AH", "", "G", ""]
+        phone_durs: [2, 3, 5, 6, ...]
+    Returns:
+        syls: ["AH", "B", ... , "G"]
+        syl_durs  [5, 11, ..., ...]
+    """
+    assert len(phone) % 2 == 1  # phone must be odd number
+    assert len(phone) == len(phone_durs)
+    unintersperse_phone = [str(phone[pos]) if phone[pos] != 11 else "" for pos in range(1, len(phone), 2)]
+    unintersperse_phone_durs = [phone_durs[pos] + phone_durs[pos-1] for pos in range(1, len(phone_durs), 2)]
+    unintersperse_phone_durs[-1] += phone_durs[-1]  # add last phone dur
+    return unintersperse_phone, unintersperse_phone_durs
 
 if __name__ == '__main__':
     speech_dir = ("/home/rosen/Project/Speech-Backbones/GradTTS/logs/interpEmoTTS_frame2binAttn_noJoint/"

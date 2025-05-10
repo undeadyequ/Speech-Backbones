@@ -66,29 +66,18 @@ def syn_speech_from_models(model1_set, model2_set, styles, synTexts, out_dir, fs
 
     with torch.no_grad():
         for model_n, configs, chk_pt in ([model_name1, model_config1, chk_pt1], [model_name2, model_config2, chk_pt2]):
-
-            ## OUTPUT
-            attn_dict = {}  # for record qk_dur and phoneme for crossAttn visualization
-            attn_dict_json = os.path.join(out_dir, "attn_{}.json".format(model_n))  # OUT1
-            out_speech_dir = os.path.join(out_dir, model_n)  # OUT2
-            out_crossAttn_dir = os.path.join(out_dir, model_n + "_attn")  # OUT3
-
+            out_speech_dir = os.path.join(out_dir, model_n)
             if os.path.isdir(out_speech_dir):
                 print("{} is already exist, omit!".format(out_speech_dir))
                 continue
-            else:
-                Path(out_speech_dir).mkdir(exist_ok=True)
-            if not os.path.isdir(out_crossAttn_dir):
-                Path(out_crossAttn_dir).mkdir(exist_ok=True)
-
             ########## Setup Generator ##########
             preprocess_config, model_config, train_config = configs
             bone_n, fineAdjNet, input_n = model_n.split("_")
-            chk_pt_path = train_config["path"]["log_dir"] + "models/" + chk_pt
+            chk_pt = train_config["path"]["log_dir"] + "models/" + chk_pt
 
             add_blank = preprocess_config["feature"]["add_blank"]
             nsymbols = len(symbols) + 1 if add_blank else len(symbols)
-            generator = get_model1(model_config, bone_n, chk_pt_path, nsymbols=nsymbols)
+            generator = get_model1(model_config, bone_n, chk_pt, nsymbols=nsymbols)
 
             inference_configs = model_config["inference"]
             stoc, time_steps, temperature, length_scale = \
@@ -134,21 +123,30 @@ def syn_speech_from_models(model1_set, model2_set, styles, synTexts, out_dir, fs
                 #print(f'Grad-TTS RTF: {t * fs_model / (y_dec.shape[-1] * 256)}')
                 audio = (vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768).astype(np.int16)
 
-                ########## Save synthesized speech and text (for alignment)##########
+                ########## Write result ##########
+                out_crossAttn_dir = os.path.join(out_dir, model_n + "_attn")
                 speech_id = f'spk{spk}_{emo}_txt{txtid}'
-                write(f'{out_speech_dir}/{speech_id}.wav', fs_model, audio)    # Write wav in out_sub_dir
+
+                # Write wav in out_sub_dir
+                if not os.path.isdir(out_speech_dir):
+                    Path(out_speech_dir).mkdir(exist_ok=True)
+                write(f'{out_speech_dir}/{speech_id}.wav', fs_model, audio)
+
+                # Write text file (for alignment)
                 txt_f = f'{out_speech_dir}/{speech_id}.lab'
                 with open(txt_f, "w") as file1:
                     file1.write(text)
 
-                ######### Save crossAttn (model_n/spk1_emo1_id1.npy)
+                # Save crossAttn in dir ("model1": emo1_id1.npy, emo1_id2.npy)
+                if not os.path.isdir(out_crossAttn_dir):
+                    Path(out_crossAttn_dir).mkdir(exist_ok=True)
                 attn_f = f'{out_crossAttn_dir}/{speech_id}.npy'
                 if cross_attn is not None:
                     # cross_attn = np.array(cross_attn)         # [(t1, [[h, l_q_phoneme_80, l_k_frame_len], [...]]), (t2)]
                     cross_attn = cross_attn.cpu().numpy()
                     np.save(attn_f, cross_attn)
 
-                ######## save attn_map_vis info
+                # recorder
                 spk = "spk"+str(spk)
                 if spk not in attn_dict.keys():
                     attn_dict[spk] = dict()
@@ -159,13 +157,13 @@ def syn_speech_from_models(model1_set, model2_set, styles, synTexts, out_dir, fs
                         "speechid": [],
                         "phonemes": [],
                         "q_dur": [],
-                        "k_dur": []}
+                        "k_dur": []
+                    }
                 attn_dict[spk][emo][model_n]["phonemes"].append(phonemes)
                 attn_dict[spk][emo][model_n]["q_dur"].append(q_dur.squeeze(0).cpu().numpy().tolist())
                 attn_dict[spk][emo][model_n]["k_dur"].append(k_dur.squeeze(0).cpu().numpy().tolist())
                 attn_dict[spk][emo][model_n]["speechid"].append(speech_id)
-            with open(attn_dict_json, "w", encoding="utf-8") as f:
-                f.write(json.dumps(attn_dict, sort_keys=True, indent=4))
+    return attn_dict
 
 
 def syn_speech_from_model_enhance(model1_set,
@@ -191,8 +189,6 @@ def syn_speech_from_model_enhance(model1_set,
     model_n, configs, chk_pt = model1_set
     vocoder = get_vocoder()
 
-
-
     with torch.no_grad():
         for enh_ind in [None, enh_ind_syn_ref]:
             bone_n, fineAdjNet, input_n = model_n.split("_")
@@ -203,10 +199,14 @@ def syn_speech_from_model_enhance(model1_set,
             enh_attn_dict_json = os.path.join(out_dir, "attn_{}.json".format(model_enh_n))  # OUT1
             out_speech_dir = os.path.join(out_dir, model_enh_n)  # OUT2
             out_crossAttn_dir = os.path.join(out_dir, model_enh_n + "_attn")  # OUT3
-
             if os.path.isdir(out_speech_dir):
                 print("{} is already exist, omit!".format(out_speech_dir))
                 continue
+            else:
+                Path(out_speech_dir).mkdir(exist_ok=True)
+            if not os.path.isdir(out_crossAttn_dir):
+                Path(out_crossAttn_dir).mkdir(exist_ok=True)
+
             ########## Setup Generator ##########
             preprocess_config, model_config, train_config = configs
             chk_pt_path = train_config["path"]["log_dir"] + "models/" + chk_pt
@@ -256,16 +256,12 @@ def syn_speech_from_model_enhance(model1_set,
 
                     ########## Save synthesized speech and text (for alignment)##########
                     speech_id = f'spk{spk}_{emo}_txt{txtid}'
-                    if not os.path.isdir(out_speech_dir):
-                        Path(out_speech_dir).mkdir(exist_ok=True)
                     write(f'{out_speech_dir}/{speech_id}.wav', fs_model, audio)
                     txt_f = f'{out_speech_dir}/{speech_id}.lab'
                     with open(txt_f, "w") as file1:
                         file1.write(text)
 
                     ######### Save crossAttn (model_n/spk1_emo1_id1.npy)
-                    if not os.path.isdir(out_crossAttn_dir):
-                        Path(out_crossAttn_dir).mkdir(exist_ok=True)
                     attn_f = f'{out_crossAttn_dir}/{speech_id}.npy'
                     if cross_attn is not None:
                         # cross_attn = np.array(cross_attn)         # [(t1, [[h, l_q_phoneme_80, l_k_frame_len], [...]]), (t2)]
@@ -293,3 +289,4 @@ def syn_speech_from_model_enhance(model1_set,
                     attn_dict[spk][emo][model_enh_n]["speechid"].append(speech_id)
             with open(enh_attn_dict_json, "w", encoding="utf-8") as f:
                 f.write(json.dumps(attn_dict, sort_keys=True, indent=4))
+    return attn_dict

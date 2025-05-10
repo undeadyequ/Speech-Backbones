@@ -1,5 +1,5 @@
 import torch
-from GradTTS.model.utils import pdur2fdur, scale_dur, pdur2syldur
+from GradTTS.model.util_mask_process import pdur2fdur, scale_dur, pdur2syldur, downsample_melstyle, masked_select_keep_dims
 from pymcd.mcd import Calculate_MCD
 
 
@@ -28,6 +28,21 @@ def test_pdur2fdur():
     durs_seq_gd = [[0., 0., 0., 0., 1., 1., 0.],
         [0., 0., 1., 1., 1., 1., 1.]]
     #assert torch.LongTensor(durs_seq_gd) == durs_seq_gd
+
+
+def test_downsample_melstyle():
+    mel_lens = torch.Tensor([[9], [12], [10], [8], [9]])
+    y_lens = torch.Tensor([[5], [8], [5], [4], [6]])
+    down_mel_mask = downsample_melstyle(mel_lens, y_lens)
+    down_mel_mask_gd = []
+
+    mels = torch.randn([5, 12, 16])
+    print(down_mel_mask)
+
+    # test two
+    mels_mask = masked_select_keep_dims(mels, down_mel_mask)
+    print(mels[0, :5])
+    print(mels_mask[0, :5])
 
 
 def test_scale_dur():

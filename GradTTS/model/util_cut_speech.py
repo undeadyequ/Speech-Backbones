@@ -5,10 +5,6 @@ import torch
 from GradTTS.model.util_mask_process import sequence_mask
 
 def cutoff_inputs(y, y_lengths, y_mask, melstyle, melstyle_lengths, attn, cut_size, y_dim=80, q_seq_dur=None, k_seq_dur=None):
-    """
-    cut off inputs for larger batches
-    Returns:
-    """
     if not isinstance(cut_size, type(None)):
         # randomly select start and end point
         max_offset = (y_lengths - cut_size).clamp(0)
@@ -18,60 +14,45 @@ def cutoff_inputs(y, y_lengths, y_mask, melstyle, melstyle_lengths, attn, cut_si
             for start, end in offset_ranges
         ]).to(y_lengths)
 
+        # initiate tensor
+        attn_cut = torch.zeros(attn.shape[0], attn.shape[1], cut_size, dtype=attn.dtype, device=attn.device)
+        y_cut = torch.zeros(y.shape[0], y_dim, cut_size, dtype=y.dtype, device=y.device)
+        melstyle_cut = torch.zeros(melstyle.shape[0], melstyle.shape[1], cut_size,
+                                        dtype=melstyle.dtype, device=melstyle.device)
         y_cut_lengths = []
         melstyle_lengths = []
 
-        # Initiate y_cut (cut_size), mel_cut (adap_size)
-        attn_cut = torch.zeros(attn.shape[0], attn.shape[1], cut_size, dtype=attn.dtype, device=attn.device)
-        y_cut = torch.zeros(y.shape[0], y_dim, cut_size, dtype=y.dtype, device=y.device)
-        q_seq_dur_cut = torch.zeros(q_seq_dur.shape[0], q_seq_dur.shape[1], cut_size,
-                                    dtype=q_seq_dur.dtype, device=q_seq_dur.device)
+        if k_seq_dur is not None:
+            q_seq_dur_cut = torch.zeros(q_seq_dur.shape[0], q_seq_dur.shape[1], cut_size,
+                                        dtype=q_seq_dur.dtype, device=q_seq_dur.device)
+            k_seq_dur_cut = torch.zeros(k_seq_dur.shape[0], k_seq_dur.shape[1], cut_size,
+                                        dtype=k_seq_dur.dtype, device=k_seq_dur.device)
+            # assign values
+            for i, (y_, out_offset_, enc_hid_cond_, q_seq_dur_, k_seq_dur_) in enumerate(zip(y, out_offset, melstyle, q_seq_dur, k_seq_dur)):
+                y_cut_length = cut_size + (y_lengths[i] - cut_size).clamp(None, 0)
+                y_cut_lengths.append(y_cut_length)
+                cut_lower, cut_upper = out_offset_, out_offset_ + y_cut_length
+                y_cut[i, :, :y_cut_length] = y_[:, cut_lower:cut_upper]
+                attn_cut[i, :, :y_cut_length] = attn[i, :, cut_lower:cut_upper]
+                melstyle_lengths.append(y_cut_length)
+                melstyle_cut[i, :, :y_cut_length] = enc_hid_cond_[:, cut_lower:cut_upper]
+                q_seq_dur_cut[i, :, :y_cut_length] = torch.clamp(q_seq_dur_[:, cut_lower:cut_upper] - q_seq_dur_[:, cut_lower], min=0)
+                k_seq_dur_cut[i, :, :y_cut_length] = torch.clamp(k_seq_dur_[:, cut_lower:cut_upper] - k_seq_dur_[:, cut_lower], min=0)
 
-        melstyle_cut = torch.zeros(melstyle.shape[0], melstyle.shape[1], melstyle.shape[2],
-                                   dtype=melstyle.dtype, device=melstyle.device)
-        k_seq_dur_cut = torch.zeros(k_seq_dur.shape[0], k_seq_dur.shape[1], k_seq_dur.shape[2],
-                                    dtype=k_seq_dur.dtype, device=k_seq_dur.device)
-        melstyle_cut_len_max = 0
-        # assign values
-        for i, (y_, out_offset_, enc_hid_cond_, q_seq_dur_, k_seq_dur_) in enumerate(zip(y, out_offset, melstyle, q_seq_dur, k_seq_dur)):
-            # y, mu_y (attn) related
-            ## cut size of y, mu_y
-            y_cut_length = cut_size + (y_lengths[i] - cut_size).clamp(None, 0)
-            y_cut_lengths.append(y_cut_length)
-            cut_lower, cut_upper = out_offset_, out_offset_ + y_cut_length
-            y_cut[i, :, :y_cut_length] = y_[:, cut_lower:cut_upper]
-            attn_cut[i, :, :y_cut_length] = attn[i, :, cut_lower:cut_upper]
-            q_seq_dur_cut[i, :, :y_cut_length] = q_seq_dur_[:, cut_lower:cut_upper]
-
-            # mel related
-            k_seq_dur_cut_, melsytyle_cut_lower, melsytyle_cut_upper = synfdur2reffdur(
-                cut_lower, cut_upper, q_seq_dur_[0], k_seq_dur_[0])  # seq_dur is one channel
-            k_seq_dur_cut_len_ = len(k_seq_dur_cut_.nonzero(as_tuple=True)[0])
-            k_seq_dur_cut[i, 0, :k_seq_dur_cut_len_] = k_seq_dur_cut_[:k_seq_dur_cut_len_]
-            ## cut size of mel
-            if k_seq_dur_cut_len_ > melstyle_cut_len_max:
-                melstyle_cut_len_max = k_seq_dur_cut_len_
-
-            melstyle_cut[i, :, :y_cut_length] = enc_hid_cond_[:, cut_lower:cut_upper]
-            melstyle_cut[i, :, :melsytyle_cut_upper - melsytyle_cut_lower] = enc_hid_cond_[:, melsytyle_cut_lower: melsytyle_cut_upper]
-            melstyle_lengths.append(k_seq_dur_cut_len_)
-
-        #k_seq_dur_cut = k_seq_dur_cut[:, :, :cut_size]
-        #melstyle_cut = melstyle_cut[:, :, :cut_size]
-
-        """
-        
-        q_seq_dur = q_seq_dur_cut
-        q_seq_dur = q_seq_dur - torch.min(q_seq_dur, -1)[0].unsqueeze(1)   # Let seq_dur start from 0, instead of cut point
-        k_seq_dur = k_seq_dur_cut
-        k_seq_dur = k_seq_dur - torch.min(k_seq_dur, -1)[0].unsqueeze(1)  # Let seq_dur start from 0, instead of cut point
-        """
-
-        k_seq_dur_cut = k_seq_dur_cut[:, :, :melstyle_cut_len_max]
-        melstyle_cut = melstyle_cut[:, :, :melstyle_cut_len_max]
-        q_seq_dur = q_seq_dur_cut
-        k_seq_dur = k_seq_dur_cut
-
+            q_seq_dur = q_seq_dur_cut
+            k_seq_dur = k_seq_dur_cut
+        else:
+            # assign values
+            for i, (y_, out_offset_, enc_hid_cond_) in enumerate(zip(y, out_offset, melstyle)):
+                y_cut_length = cut_size + (y_lengths[i] - cut_size).clamp(None, 0)
+                y_cut_lengths.append(y_cut_length)
+                cut_lower, cut_upper = out_offset_, out_offset_ + y_cut_length
+                y_cut[i, :, :y_cut_length] = y_[:, cut_lower:cut_upper]
+                attn_cut[i, :, :y_cut_length] = attn[i, :, cut_lower:cut_upper]
+                melstyle_lengths.append(y_cut_length)
+                melstyle_cut[i, :, :y_cut_length] = enc_hid_cond_[:, cut_lower:cut_upper]
+            q_seq_dur = None
+            k_seq_dur = None
 
         y_cut_lengths = torch.LongTensor(y_cut_lengths)
         y_cut_mask = sequence_mask(y_cut_lengths, max_length=cut_size).unsqueeze(1).to(
@@ -87,7 +68,7 @@ def cutoff_inputs(y, y_lengths, y_mask, melstyle, melstyle_lengths, attn, cut_si
     return y, y_lengths, y_mask, melstyle, melstyle_lengths, attn, q_seq_dur, k_seq_dur
 
 
-def cutoff_inputs1(y, y_lengths, y_mask, melstyle, melstyle_lengths, attn, cut_size, y_dim=80, q_seq_dur=None, k_seq_dur=None):
+def cutoff_inputs_old(y, y_lengths, y_mask, melstyle, melstyle_lengths, attn, cut_size, y_dim=80, q_seq_dur=None, k_seq_dur=None):
     """
     cut off inputs for larger batches
     Returns:

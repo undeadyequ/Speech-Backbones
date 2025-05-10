@@ -342,7 +342,7 @@ if __name__ == "__main__":
     parser.add_argument("-hMask", "--mono_hard_mask", type=bool, default=False)
     parser.add_argument("-mMask", "--mono_mas_mask", type=bool, default=False)
     parser.add_argument("-gLoss", "--guide_loss", type=str, default="psuedo")    # psuedo, p2p, s2s
-    parser.add_argument("-pRoPE", "--phoneme_RoPE", type=str, default="phone") # None, phone, syl
+    parser.add_argument("-pRoPE", "--phoneme_RoPE", type=str, default="frame") # None, phone, sel
     parser.add_argument("-gNorm", "--global_norm", type=bool, default=False)
     parser.add_argument("-reType", "--ref_encoder_type", type=str, default="mlp")
     args = parser.parse_args()

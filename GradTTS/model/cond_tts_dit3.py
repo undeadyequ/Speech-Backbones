@@ -3,6 +3,7 @@ import random
 
 import torch
 
+from GradTTS.exp.utils import clean_phone
 from GradTTS.model.base import BaseModule
 from GradTTS.model.encoder.text_encoder import TextEncoder
 from GradTTS.model.diffusion import Mish
@@ -11,7 +12,8 @@ from GradTTS.model.cond_diffusion3 import CondDiffusion
 from GradTTS.model.utils import duration_loss, fix_len_compatibility, align_a2b_padcut, search_ma
 
 from GradTTS.model.util_mask_process import (pdur2fdur, scale_dur, sequence_mask, generate_path, get_diag_from_dur2,
-                                             create_p2pmask_from_seqdur, generate_diagal_fromMask)
+                                             create_p2pmask_from_seqdur, generate_diagal_fromMask, downsample_melstyle,
+                                             masked_select_keep_dims)
 from GradTTS.model.util_cut_speech import cutoff_inputs
 from GradTTS.modules.vqpe import VQProsodyEncoder
 from GradTTS.model.guided_loss import GuidedAttentionLoss
@@ -41,7 +43,7 @@ class CondGradTTSDIT3(BaseModule):
                  text_encoder_config=None,
                  ref_encoder_config=None,
                  decoder_config=None,
-                 chunksize=50,
+                 chunksize=20,
                  ):
         super(CondGradTTSDIT3, self).__init__()
         # shared parameter
@@ -185,13 +187,21 @@ class CondGradTTSDIT3(BaseModule):
         mu_y, y_mask, y_max_length, attn, attn_mask = self.predict_prior(x, x_lengths, spk_emb, length_scale)
         encoder_outputs = mu_y[:, :, :y_max_length]
         p_dur = torch.sum(attn, -1).squeeze(1)  # (b, 1, mu_x_len, mu_y_len) -> (b, mu_x_len)
-        k_dur = scale_dur(p_dur, melstyle_lengths)  # (b, 1, melstyle_len)
+        k_dur = torch.clone(p_dur)
+        #k_dur = scale_dur(p_dur, melstyle_lengths)  # (b, 1, melstyle_len)
         #syl_start_scale = scale_dur(syl_start, melstyle_lengths)
+
+        # 2.1. cut melstyle to have same length with attn
+        mu_y_lengths = attn.squeeze(1).sum(2).sum(1)
+        down_sample_filter = downsample_melstyle(melstyle_lengths, mu_y_lengths)  # (b, max_y_len)
+        melstyle = masked_select_keep_dims(
+            melstyle.transpose(1, 2), down_sample_filter).transpose(1, 2)  # (b, mel_len, 80) -> (b, max_y_len, 80)
 
         if self.phoneme_RoPE == "phone" or self.phoneme_RoPE == "sel":
             syl_start = syl_start if self.phoneme_RoPE == "sel" else None
             q_seq_dur = pdur2fdur(p_dur, y_mask.squeeze(1), syl_start)  # (b, 1, mu_x_len) -> (b, 1, mu_y_len)
-            k_seq_dur = pdur2fdur(k_dur, sequence_mask(melstyle_lengths).long(), syl_start) # ???Only used for parallel data (unpara need extra input k_dur)
+            #k_seq_dur = pdur2fdur(k_dur, sequence_mask(melstyle_lengths).long(), syl_start) # ???Only used for parallel data (unpara need extra input k_dur)
+            k_seq_dur = q_seq_dur
         else:
             q_seq_dur = None
             k_seq_dur = None
@@ -202,11 +212,15 @@ class CondGradTTSDIT3(BaseModule):
 
         # 4. gather attn_mask and enhance input
         attnCross_mask = y_mask.repeat(1, melstyle.shape[2], 1).transpose(1, 2)  # !! strange ||
-        # get enhancing phone duration given index
+        ## Get enhancing phoneid index and duration from given phone index
         if enh_ind_syn_ref is not None:
             q_enh_phone_indx, k_enh_phone_indx = enh_ind_syn_ref
-            refenh_ind_dur, synenh_ind_dur = ((q_enh_phone_indx, p_dur[:, q_enh_phone_indx]),
-                                              (k_enh_phone_indx, k_dur[:, k_enh_phone_indx]))
+            q_enh_phone_dur, k_enh_phone_dur = (int(p_dur[0, q_enh_phone_indx].cpu().item()),
+                                                int(k_dur[0, k_enh_phone_indx].cpu().item()))
+            refenh_ind_dur, synenh_ind_dur = ((q_enh_phone_indx, q_enh_phone_dur),
+                                              (k_enh_phone_indx, k_enh_phone_dur))
+            #print("Enhance p_ind:{} f_dur:{} of syn by p_ind:{} f_dur:{} of ref".format(
+            #    q_enh_phone_indx, q_enh_phone_dur, k_enh_phone_indx, k_enh_phone_dur))
         else:
             refenh_ind_dur, synenh_ind_dur = None, None
 
@@ -300,18 +314,24 @@ class CondGradTTSDIT3(BaseModule):
         logw_ = torch.log(1e-8 + torch.sum(attn.unsqueeze(1), -1)) * x_mask
         dur_loss = duration_loss(logw, logw_, x_lengths)
 
-        ## convert gd attn to gd dur, seq_dur (ONLY for p/s-level embedding)
+        ## Convert attn to p_dur, then to seq_dur for Q and K.
+        down_sample_filter = downsample_melstyle(melstyle_lengths, y_lengths)  # (b, max_y_len)
+        melstyle = masked_select_keep_dims(melstyle.transpose(1, 2), down_sample_filter).transpose(1, 2)  # (b, mel_len, 80) -> (b, max_y_len, 80)
         if self.phoneme_RoPE == "phone" or self.phoneme_RoPE == "sel":
             p_dur = torch.sum(attn, -1)             # (b, mu_x_len, mu_y_len) -> (b, mu_x_len)
             syl_start = syl_start if self.phoneme_RoPE == "sel" else None
+            q_seq_dur = pdur2fdur(p_dur, y_mask.squeeze(1), syl_start).unsqueeze(1)  # (b, mu_x_len) -> (b, 1, mu_y_len)
 
+            """ Approach1: Scale
             k_dur = scale_dur(p_dur, melstyle_lengths)
+            k_seq_dur = pdur2fdur(k_dur, sequence_mask(melstyle_lengths).long(), syl_start).unsqueeze(1) # (b, 1, melstyle_len)
+            """
+            ### Approach2: downsample melstyle:
+            k_seq_dur = q_seq_dur
+
             #print("phone_num of p_dur, k_dur", torch.count_nonzero(p_dur, dim=1), torch.count_nonzero(k_dur, dim=1))
             #print("p_dur[:4], k_dur[:4]", p_dur[:4, :], k_dur[:4, :])
             #print("y_len[:4], mel_style_len[:4]", y_lengths[:4], melstyle_lengths[:4])
-
-            q_seq_dur = pdur2fdur(p_dur, y_mask.squeeze(1), syl_start).unsqueeze(1)     # (b, mu_x_len) -> (b, 1, mu_y_len)
-            k_seq_dur = pdur2fdur(k_dur, sequence_mask(melstyle_lengths).long(), syl_start).unsqueeze(1) # (b, 1, melstyle_len)
             #print("phone_num of q_seq_dur, k_seq_dur", torch.max(q_seq_dur[:4, 0, :], dim=1)[0], torch.max(k_seq_dur[:4, 0, :], dim=1)[0])
             #print("q_seq_dur, k_seq_dur", q_seq_dur[:4, 0, :], k_seq_dur[:4, 0, :])
         else:
@@ -332,7 +352,7 @@ class CondGradTTSDIT3(BaseModule):
         ## Create cross_attn mask
         attnCross_mask = y_mask.repeat(1, melstyle_cond.shape[2], 1).transpose(1, 2)  # ???
         ## Get mu_y by attn
-        save_plot(attn[1].detach().cpu(), "muxy_attn.png")
+        #save_plot(attn[1].detach().cpu(), "muxy_attn.png")
         mu_y = torch.matmul(attn.squeeze(1).transpose(1, 2), mu_x.transpose(1, 2)) # attn: (b, mu_x_len, mu_y_len)
         mu_y = mu_y.transpose(1, 2)
 

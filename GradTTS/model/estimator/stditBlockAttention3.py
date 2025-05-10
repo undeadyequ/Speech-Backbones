@@ -42,6 +42,8 @@ class MultiHeadAttention(nn.Module):
         return x
 
     def attention(self, query, key, value, mask=None):
+        from GradTTS.utils import index_nointersperse, plot_tensor, save_plot
+
         b, d, t_s, t_t = (*key.size(), query.size(2))
         query = query.view(b, self.n_heads, self.k_channels, t_t).transpose(2, 3)
         key = key.view(b, self.n_heads, self.k_channels, t_s).transpose(2, 3)
@@ -52,6 +54,12 @@ class MultiHeadAttention(nn.Module):
 
         output = F.scaled_dot_product_attention(query, key, value, attn_mask=mask,
                                                 dropout_p=self.p_dropout if self.training else 0)
+        #output, attn_map = scaled_dot_product_attention(
+        #    query, key, value, attn_mask=mask.squeeze(1),
+        #    dropout_p=self.p_dropout if self.training else 0)
+        ########## CHECK selft attention #############
+        #save_plot(attn_map[0][0].cpu(), f"self_attn_map.png")
+
         output = output.transpose(2, 3).contiguous().view(b, d, t_t)  # [b, n_h, t_t, d_k] -> [b, d, t_t]
         return output
 
@@ -160,7 +168,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
     return attn_weight @ value, attn_weight
 
 
-def enhancePhoneAttention(attn, refenh_ind_dur, synenh_ind_dur, enh_score=1.0, enh_type="soft"):
+def enhancePhoneAttention(attn, refenh_ind_dur, synenh_ind_dur, enh_score=1, enh_type="soft"):
     """
     attn: (b, h, ref_len, syn_len)
     enh_score: (0, 1)  -> Currently can not set to 1.0 because minus problem
@@ -171,17 +179,25 @@ def enhancePhoneAttention(attn, refenh_ind_dur, synenh_ind_dur, enh_score=1.0, e
     j, m = refenh_ind_dur
     p_exp = [ind for ind in range(attn.shape[2]) if ind not in range(j, j + m)]
 
+    """
     if enh_type == "add":
         attn[:,:,i:i + n, j:j + m] = torch.clamp(attn[:,:,i + n, j:j + m] + 0.5, max=1.0)
         attn[:,:,i:i + n, p_exp] = torch.clamp(attn[:,:,i, p_exp] - 0.5, min=0.0)
     elif enh_type == "hard":
         attn[:,:,i:i + n, j:j + m] = 1 / m
         attn[:,:,i:i + n, p_exp] = 0
-    else:
-        enh_submatrix = (torch.one_like(attn[:,:,i:i + n, j:j + m]) - attn[:,:,i:i + n, j:j + m]) * enh_score
-        attn[:,:,i:i + n, j:j + m] = attn[:,:,i:i + n, j:j + m] + enh_submatrix
+    """
+    # add enhance value to enhance submatrix
+    enh_submatrix = (torch.ones_like(attn[:,:,i:i + n, j:j + m]) - attn[:,:,i:i + n, j:j + m]) * enh_score # possible enhancing matrix
 
-    de_enh_ratio = torch.sum(enh_submatrix, dim=1) / torch.sum(attn[:,:,i:i + n, p_exp], dim=1)
-    de_enh_submatrix = attn[:,:,i:i + n, p_exp] * de_enh_ratio
-    attn[:,:,i + i + n, p_exp] = attn[:,:,i + n, p_exp] - de_enh_submatrix
+    ############# CHECK1 enhanced submatix
+    #print("before enhance:", attn[0,0,i:i + n, j:j + m])
+    attn[:,:,i:i + n, j:j + m] = attn[:,:,i:i + n, j:j + m] + enh_submatrix
+    #print("after enhance:", attn[0, 0, i:i + n, j:j + m])
+
+    # substract enhancing value to non-enhance submatrix
+    #a = torch.sum(enh_submatrix, dim=-1)
+    #b = torch.sum(attn[:,:,i:i + n, p_exp], dim=-1)
+    #de_enh_ratio = torch.sum(enh_submatrix, dim=-1) / torch.sum(attn[:,:,i:i + n, p_exp], dim=-1)
+    #attn[:,:,i + i + n, p_exp] = attn[:,:,i + n, p_exp] - attn[:,:,i:i + n, p_exp] * de_enh_ratio
     return attn

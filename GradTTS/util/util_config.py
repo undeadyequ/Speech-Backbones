@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
-
 import yaml
+from pooch import retrieve
 from GradTTS.text.symbols import symbols
 from torch.utils.tensorboard import SummaryWriter
 
@@ -81,9 +81,17 @@ def convert_item2input(item, inference_param=dict(), train_param=dict(), mode="t
 
 def convert_to_generator_input(model_n, x, x_lengths, time_steps, temperature, stoc, spk_tensor, length_scale,
                                emo_tensor, melstyle_tensor, melstyle_tensor_lengths, syl_start=None,
-                               enh_ind=None):
+                               enh_ind=None, phonemes=None):
     bone_n, fineAdjNet, input_n = model_n.split("_")
     if bone_n == "stditCross":
+        if enh_ind is not None:
+            if phonemes is not None:
+                syn_phoneid_index = convert_phoneid2encPhoneid(enh_ind[0], phonemes)
+                ref_phoneid_index = convert_phoneid2encPhoneid(enh_ind[1], phonemes)
+                enh_ind = (syn_phoneid_index, ref_phoneid_index)
+            else:
+                raise IOError("ERROR, Please add phonemes")
+
         input = {
             "x": x,
             "x_lengths": x_lengths,
@@ -104,3 +112,44 @@ def convert_to_generator_input(model_n, x, x_lengths, time_steps, temperature, s
     else:
         input = {}
     return input
+
+def convert_enh_syn_ref_index(enh_syn_ref_index):
+    """
+
+    Args:
+        enh_syn_ref_index: ([0, 1], [0, 1])  # enhancing phones of syn and ref
+
+    Returns:
+        converted_enh_syn_ref_index ([5, 8], [5, 8])
+    """
+    convert_syn_indx = []
+    convert_ref_indx = []
+    for syn_indx, ref_indx in zip(enh_syn_ref_index[0], enh_syn_ref_index[1]):
+        cv_syn_indx = convert_phoneid2encPhoneid(syn_indx)
+        convert_syn_indx.append(cv_syn_indx)
+        if syn_indx == ref_indx:
+            convert_ref_indx.append(cv_syn_indx)
+        else:
+            cv_ref_indx = convert_phoneid2encPhoneid(ref_indx)
+            convert_ref_indx.append(cv_ref_indx)
+    return (convert_syn_indx, convert_ref_indx)
+
+def convert_phoneid2encPhoneid(nonEnc_rm_phone_idx, enc_phones):
+    """
+    
+    Convert phoneid of nonEncoded without "" 11 to phoneid of encoded phoneid ()
+    Example:
+        nonEnc_rm_phone_idx: 2 (AH0)  <- start from 0
+        enc_phones: ["", "AH", "", 11, "", "B", "", "AH0", "", "IH, "", 11, "", "AH", "", "G", ""]
+
+    Args:
+        phone_idx:
+        phones:
+
+    Returns:
+        enc_phone_indx: 7
+    """
+    # find the enhancing phone
+    nonEnc_rm_phoneid = [phone for phone in enc_phones if (phone != '' and phone!= 11)]
+    enhance_phone = nonEnc_rm_phoneid[nonEnc_rm_phone_idx]
+    return nonEnc_rm_phoneid.index(enhance_phone)

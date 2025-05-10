@@ -22,6 +22,49 @@ pdur2diag_dur
 scale_dur
 """
 
+def downsample_melstyle(mel_lens, y_lens):
+    """
+
+    Args:
+        mel_lens: (b, )
+        y_lens: (b, )
+    Returns:
+        down_mel_mask: (b, max_mel_lens)
+    """
+    assert max(mel_lens) > max(y_lens)
+    down_mel_mask = torch.zeros([len(mel_lens), max(mel_lens).int()], device=mel_lens.device)
+    for i, b in enumerate(mel_lens):
+        mel_l, y_l = int(mel_lens[i].item()), int(y_lens[i].item())
+        rm_num = mel_l - y_l
+        intv, remain = int(mel_l / rm_num), int(rm_num % mel_l)
+        rm_index = torch.arange(0, rm_num * intv, intv).tolist()
+        down_mel_mask[i][:mel_l] = 1    # set mel parts
+        down_mel_mask[i][rm_index] = 0  # set rm in mel parts
+    return down_mel_mask
+
+
+def masked_select_keep_dims(tensors: torch.Tensor, masks: torch.Tensor):
+    """
+    Args:
+        tensors: (b, l1, dim)
+        masks: (b, l1)   # int (0, 1) or bool
+    Returns:
+        masked_tensor: (b, l1_max_nonzero, dim)
+    """
+    if masks.dtype != torch.bool:
+        masks = masks.to(torch.bool)
+
+    l1_max_nonzero = max(masks.count_nonzero(dim=1)).int()
+    masks = masks.unsqueeze(-1).repeat(1, 1, tensors.size(-1))
+
+    bs, l1, dim = tensors.shape
+    masked_tensor = torch.zeros([bs, l1_max_nonzero, dim], device=tensors.device)
+    
+    for b in range(bs):
+        masked_select_tensor = torch.masked_select(tensors[b], masks[b]).view(-1, dim).cuda()
+        masked_tensor[b, :len(masked_select_tensor), :] = masked_select_tensor
+    return masked_tensor
+
 
 def pdur2fdur(durs, seq_len, syl_start=None):
     """
@@ -42,8 +85,8 @@ def pdur2fdur(durs, seq_len, syl_start=None):
 
     durs_seq = torch.zeros_like(seq_len, device=durs.device)
     for i, dur in enumerate(durs.int()):
-        #dur_index = torch.arange(1, len(dur) + 1).to(durs.device)  # [1, 3, 2] -> [1, 2, 3]
-        dur_index = torch.arange(len(dur)).to(durs.device)  # [1, 3, 2] -> [1, 2, 3]
+        dur_index = torch.arange(1, len(dur) + 1).to(durs.device)  # [1, 3, 2] -> [1, 2, 3]
+        #dur_index = torch.arange(len(dur)).to(durs.device)  # [1, 3, 2] -> [1, 2, 3]
 
         dur_repeat = torch.repeat_interleave(dur_index, dur)  # repeat each element of dur by dur times exp: [1, 2, 3] -> [1, 2, 2, 2, 3, 3]
         if len(dur_repeat) <= durs_seq.shape[1]:

@@ -38,3 +38,4 @@ y2 = np.array([1, 1, 1, 2, 2, 0])
 print(np.all(np.isnan(y2) == False))
 
 print(interpolate_nan(y))
+
